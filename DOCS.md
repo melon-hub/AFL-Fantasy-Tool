@@ -173,60 +173,38 @@ Left sidebar with: Rankings, Draft Tracker, My Team, Bye Planner, Tiers, Expert 
 
 ---
 
-## UX Accessibility — The "Simple Mode" Problem
+## UX Design Principle — "Who Should I Pick and Why?"
 
-### The Gap
+The tool doesn't need a Simple Mode. It needs to answer one question clearly at all times: **who is the best pick right now, and why?**
 
-Our tool is more analytically powerful than Smart Draft Board in several ways (VONA, position runs, pick countdown, smokies). But power means nothing if your league mates open the app and feel intimidated.
+Everything else — VORP, scarcity bars, bye charts — is supporting evidence. The intelligence panel's top recommendation should be the first thing your eye hits, with plain-English reasons underneath. The numbers are there for people who want to dig in, but the answer is always front and centre.
 
-Smart Draft Board succeeds because it **feels approachable**. Their Quick Tour explains jargon on first load. Their "Focus" mode strips complexity. Their tag system (STEAL, VALUE, SAFE) communicates in plain English. Their VORP column has gold heat shading that makes value scannable without understanding the number.
+### What Smart Draft Board Does Well Here
 
-Our column headers — VORP, VONA, finalValue, smartRank, positionalScarcity — speak to people who already understand fantasy analytics. For the league mate who just wants to know "who should I pick next?", this is a wall of jargon.
+Their approach to clarity is worth learning from:
 
-### The Fix: Simple Mode + Friendly Labels
+- **Quick Tour onboarding** — 5 tooltips on first load that explain Smart Rank, VORP, and draft intelligence in 30 seconds. We should add this. A first-time user shouldn't have to wonder what VONA means.
+- **Tag system** — STEAL, VALUE, REACH, SAFE, RISKY, UPSIDE badges communicate conclusions without requiring you to understand the derivation. "This player is a STEAL" is immediately useful. "This player has a valueOverAdp of 12" is not, even though it means the same thing.
+- **Heat shading** — gold intensity on the VORP column makes value scannable without reading numbers. We do this with green/yellow/orange, which works similarly.
+- **Intelligence banner** — their draft intelligence sits above the rankings as a prominent banner, not tucked in a sidebar. The recommendations are the first thing you see.
 
-The solution is **not** to remove the advanced analytics. It's to hide them behind a friendlier default, with a toggle for power users. Specifically:
+### What We Already Do Right
 
-**Simple Mode (default ON for first-time users):**
+The intelligence panel's recommendation system is actually stronger than Smart Draft Board's — each recommendation comes with multiple human-readable reasons. "Elite value: 28.3 VORP above replacement" and "DEF is CRITICAL — only 4 left, 0 premiums remaining" tells you both the what and the why. Smart Draft Board splits this into 4 separate panels you have to cross-reference.
 
-Show only these columns: `Name` | `Pos` | `Club` | `Proj Score` | `Smart Pick Score` | `Bye` | `Alerts`
+Our VONA column (which they don't have) directly answers "what do I lose if I skip this player?" — that's one of the most actionable things you can know on draft night.
 
-Hide: VORP, VONA, dppBonus, vorpByPosition, category, ADP. The intelligence panel still shows plain-English alerts.
+### Improvements Worth Making
 
-**Advanced Mode (toggle ON):**
+1. **Column header tooltips** — hover over "VORP" and see "How much better this player is than the last starter at their position." Hover over "VONA" and see "If you skip this player, the next best at their position is this many points worse." Low effort, big clarity win.
 
-Full column set as currently built. All the analytics, all the numbers.
+2. **Recommendation prominence** — the top pick recommendation should be visually dominant. Bold it, give it a coloured background, make it impossible to miss at a glance.
 
-**Friendly column labels (both modes):**
+3. **Plain-English alerts** — "DEF is CRITICAL" is already clear, but "DPP flexibility (DEF/MID)" could be "Plays 2 positions — fills multiple roster needs." Small wording tweaks.
 
-| Current Name | Friendly Name | Tooltip |
-|---|---|---|
-| VORP | Value Score | "How much better this player is than a replacement-level player in your league" |
-| Smart Rank | Smart Pick Score | "Best overall pick right now — combines value, positional urgency, and bye balance" |
-| VONA | Skip Cost | "If you skip this player, the next best at this position is X points worse" |
-| finalValue | Overall Score | "Value Score plus any dual-position bonus" |
-| positionalScarcity | (hidden in Simple, shown as bar in Advanced) | "How depleted this position is across the league" |
+4. **Player tags** — adding STEAL/VALUE/REACH badges computed from ADP vs VORP rank would communicate value at a glance without understanding the numbers. A "STEAL" badge next to a player is instantly meaningful.
 
-**Intelligence panel friendly language:**
-
-| Current | Friendly |
-|---|---|
-| "VORP above replacement" | "extra points over a bench-level player" |
-| "DPP flexibility" | "extra value because they play 2 positions" |
-| "Positional scarcity: critical" | "Almost no good [position] left — pick one now!" |
-
-Plus a one-line explainer at the top of the panel: *"Higher Smart Pick Score = better pick right now. The alerts below explain why."*
-
-### Why This Matters
-
-The people who win leagues aren't necessarily the ones who understand VORP maths — they're the ones who **use a tool at all** instead of drafting on vibes. If your tool scares half the league into not using it, you've lost half the potential advantage.
-
-Smart Draft Board understood this. Their Quick Tour (5 tooltips, 30 seconds) turns a confused first-time user into someone who knows what "Smart Rank" and "VORP" mean. Their tag system (STEAL, VALUE, REACH) communicates the conclusion without requiring you to understand the derivation.
-
-After implementing Simple Mode, the comparison looks like:
-- **Easier than Smart Draft Board** — they still force you to understand "Smart Rank" from the column header alone. We'd have a one-click Simple Mode that feels like a smarter spreadsheet.
-- **More powerful when you want it** — toggle to Advanced and you get VONA, position runs, pick countdown, smokies — features they don't have at all.
-- **Draft-night speed stays the same** — Smart Pick Score + alerts + countdown are front-and-centre in both modes.
+5. **First-load tour** — a 4-step tooltip walkthrough: Smart Rank → VORP → Recommendations → Draft button. Takes 20 seconds, prevents the "wall of jargon" feeling.
 
 ---
 

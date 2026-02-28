@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -383,9 +383,9 @@ export function DraftBoard({ players, onDraftClick }: DraftBoardProps) {
           </thead>
           <tbody>
             {rows.map((row, idx) => (
-              <>
+              <Fragment key={row.id}>
                 {tierBreaks.has(idx) && (
-                  <tr key={`break-${idx}`}>
+                  <tr>
                     <td
                       colSpan={columns.length}
                       className="border-t-2 border-dashed border-amber-400/60 dark:border-amber-600/40"
@@ -393,7 +393,6 @@ export function DraftBoard({ players, onDraftClick }: DraftBoardProps) {
                   </tr>
                 )}
                 <tr
-                  key={row.id}
                   className={clsx(
                     "border-b border-zinc-100 transition-colors dark:border-zinc-800",
                     row.original.isDrafted
@@ -410,7 +409,7 @@ export function DraftBoard({ players, onDraftClick }: DraftBoardProps) {
                     </td>
                   ))}
                 </tr>
-              </>
+              </Fragment>
             ))}
             {rows.length === 0 && (
               <tr>
