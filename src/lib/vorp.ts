@@ -43,16 +43,21 @@ function normaliseMinMax(
   return ((value - min) / (max - min)) * 100;
 }
 
-function parseRiskBase(risk: string): number {
-  const r = risk.trim().toLowerCase();
+function normaliseText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseRiskBase(risk: string | null | undefined): number {
+  const r = normaliseText(risk).toLowerCase();
   if (r === "low") return 20;
   if (r === "medium") return 55;
   if (r === "high") return 85;
   return 45;
 }
 
-function textIndicatesSeasonOut(text: string): boolean {
-  const lower = text.toLowerCase();
+function textIndicatesSeasonOut(text: string | null | undefined): boolean {
+  const lower = normaliseText(text).toLowerCase();
+  if (!lower) return false;
   return (
     lower.includes("out for season") ||
     lower.includes("season-ending") ||
@@ -72,7 +77,7 @@ function isSeasonLongUnavailable(player: Player): boolean {
 
 function calculateRiskScore(player: Player): number {
   if (isSeasonLongUnavailable(player)) return 100;
-  const injuryPenalty = player.injury.trim() ? 10 : 0;
+  const injuryPenalty = normaliseText(player.injury) ? 10 : 0;
   return clamp(parseRiskBase(player.risk) + injuryPenalty, 0, 100);
 }
 

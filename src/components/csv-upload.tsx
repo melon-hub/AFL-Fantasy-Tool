@@ -61,7 +61,7 @@ export function CsvUpload() {
           Drop your CSV here, or click to browse
         </p>
         <p className="text-xs text-zinc-400">
-          Required: name, pos, club, proj_score, bye
+          Required: name, pos, club, projection (proj_score or data_projected), bye
         </p>
         <input
           ref={inputRef}

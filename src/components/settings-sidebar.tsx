@@ -23,10 +23,10 @@ import { useLiveSync } from "@/hooks/use-live-sync";
 
 // Bookmarklet source — reads X-SID + league ID from the AFL Fantasy page
 // and POSTs them to your local draft tool.
-const BOOKMARKLET_CODE = `javascript:(function(){var c=document.cookie.split(';'),x='';for(var i=0;i<c.length;i++){var t=c[i].trim();if(t.indexOf('X-SID=')===0){x=t.substring(6);break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!x||!l){alert('Open your AFL Fantasy draft page first');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
+const BOOKMARKLET_CODE = `javascript:(function(){var c=document.cookie.split(';'),x='',keys={'x-sid':1,'x_sid':1,'xsid':1};for(var i=0;i<c.length;i++){var t=c[i].trim(),eq=t.indexOf('=');if(eq<=0)continue;var k=t.slice(0,eq).trim().toLowerCase();if(keys[k]){x=decodeURIComponent(t.slice(eq+1));break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!l){alert('Open your AFL Fantasy draft page first');return}if(!x){x=window.prompt('Could not auto-read X-SID. Paste it from DevTools > Application > Cookies > fantasy.afl.com.au', '')||''}if(!x){alert('X-SID is required');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
 
 // Console helper: paste into DevTools Console on the AFL draft page.
-const CONSOLE_CONNECT_CODE = `(function(){var c=document.cookie.split(';'),x='';for(var i=0;i<c.length;i++){var t=c[i].trim();if(t.indexOf('X-SID=')===0){x=t.substring(6);break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!x||!l){alert('Open your AFL Fantasy draft page first');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
+const CONSOLE_CONNECT_CODE = `(function(){var c=document.cookie.split(';'),x='',keys={'x-sid':1,'x_sid':1,'xsid':1};for(var i=0;i<c.length;i++){var t=c[i].trim(),eq=t.indexOf('=');if(eq<=0)continue;var k=t.slice(0,eq).trim().toLowerCase();if(keys[k]){x=decodeURIComponent(t.slice(eq+1));break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!l){alert('Open your AFL Fantasy draft page first');return}if(!x){x=window.prompt('Could not auto-read X-SID. Paste it from DevTools > Application > Cookies > fantasy.afl.com.au', '')||''}if(!x){alert('X-SID is required');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
 
 const LIVE_SYNC_LEAGUE_ID_KEY = "afl-live-sync-league-id";
 const LIVE_SYNC_XSID_KEY = "afl-live-sync-xsid";
@@ -233,6 +233,32 @@ export function SettingsSidebar() {
                 <> &middot; {Math.round((nowTs - sync.lastSyncTime) / 1000)}s ago</>
               )}
             </p>
+
+            <div className="mb-2 rounded bg-zinc-50 p-2 dark:bg-zinc-800/50">
+              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+                <span className="text-zinc-500">League</span>
+                <span className="truncate text-right text-zinc-700 dark:text-zinc-300">
+                  {sync.leagueName || (leagueId ? `#${leagueId}` : "—")}
+                </span>
+                <span className="text-zinc-500">Draft Status</span>
+                <span className="truncate text-right text-zinc-700 dark:text-zinc-300">
+                  {sync.draftStatus || "—"}
+                </span>
+                <span className="text-zinc-500">On Clock</span>
+                <span className="truncate text-right text-zinc-700 dark:text-zinc-300">
+                  {sync.onClockLabel || "—"}
+                </span>
+                <span className="text-zinc-500">Poll</span>
+                <span className="text-right text-zinc-700 dark:text-zinc-300">
+                  every {sync.pollIntervalSec}s
+                </span>
+              </div>
+              {sync.teamNames.length > 0 && (
+                <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">
+                  Teams: {sync.teamNames.join(", ")}
+                </p>
+              )}
+            </div>
 
             {/* Inputs */}
             <div className="mb-2 flex flex-col gap-1.5">

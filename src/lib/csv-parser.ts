@@ -22,6 +22,23 @@ function findColumn(
 }
 
 /**
+ * Find all matching CSV headers for a target field in alias priority order.
+ * Useful when we want row-level fallback (e.g. if first column is blank on some rows).
+ */
+function findColumns(
+  headers: string[],
+  aliases: string[]
+): string[] {
+  const normalised = headers.map((h) => h.trim().toLowerCase());
+  const matches: string[] = [];
+  for (const alias of aliases) {
+    const idx = normalised.indexOf(alias.toLowerCase());
+    if (idx !== -1) matches.push(headers[idx]);
+  }
+  return matches;
+}
+
+/**
  * Parse a position string like "DEF/MID" into an array of Position values.
  */
 function parsePositions(raw: string): Position[] {
@@ -60,6 +77,40 @@ export function parseCsv(input: string): {
 } {
   const errors: string[] = [];
 
+  const parseFirstNumeric = (
+    row: Record<string, string>,
+    columns: string[]
+  ): number => {
+    for (const col of columns) {
+      const value = parseFloat(row[col]);
+      if (!isNaN(value)) return value;
+    }
+    return NaN;
+  };
+
+  // Prefer the first projection column match, but if it is 0/blank and a later
+  // candidate has a positive value, use that fallback.
+  const parseProjectionScore = (
+    row: Record<string, string>,
+    columns: string[]
+  ): number => {
+    let primaryValue: number | null = null;
+    let positiveFallback: number | null = null;
+
+    for (const col of columns) {
+      const raw = row[col];
+      if (typeof raw !== "string" || raw.trim() === "") continue;
+      const value = parseFloat(raw);
+      if (isNaN(value)) continue;
+      if (primaryValue === null) primaryValue = value;
+      if (value > 0 && positiveFallback === null) positiveFallback = value;
+    }
+
+    if (primaryValue === null) return NaN;
+    if (primaryValue <= 0 && positiveFallback !== null) return positiveFallback;
+    return primaryValue;
+  };
+
   const result = Papa.parse<Record<string, string>>(input, {
     header: true,
     skipEmptyLines: true,
@@ -80,7 +131,7 @@ export function parseCsv(input: string): {
   const colName = findColumn(headers, CSV_COLUMN_MAPPING.name);
   const colPos = findColumn(headers, CSV_COLUMN_MAPPING.positions);
   const colClub = findColumn(headers, CSV_COLUMN_MAPPING.club);
-  const colProj = findColumn(headers, CSV_COLUMN_MAPPING.projScore);
+  const colProj = findColumns(headers, CSV_COLUMN_MAPPING.projScore);
   const colPs26 = findColumn(headers, CSV_COLUMN_MAPPING.preseason26);
   const colBye = findColumn(headers, CSV_COLUMN_MAPPING.bye);
   const colAge = findColumn(headers, CSV_COLUMN_MAPPING.age);
@@ -97,17 +148,19 @@ export function parseCsv(input: string): {
   const colTogPct = findColumn(headers, CSV_COLUMN_MAPPING.togPct);
   const colAdpValueGap = findColumn(headers, CSV_COLUMN_MAPPING.adpValueGap);
   const colVariance = findColumn(headers, CSV_COLUMN_MAPPING.variance);
-  const colAvgScore2025 = findColumn(headers, CSV_COLUMN_MAPPING.avgScore2025);
-  const colMaxScore2025 = findColumn(headers, CSV_COLUMN_MAPPING.maxScore2025);
+  const colAvgScore2025 = findColumns(headers, CSV_COLUMN_MAPPING.avgScore2025);
+  const colMaxScore2025 = findColumns(headers, CSV_COLUMN_MAPPING.maxScore2025);
 
   // Validate required columns
   if (!colName) errors.push('Required column missing: "name"');
   if (!colPos) errors.push('Required column missing: "pos" / "position"');
   if (!colClub) errors.push('Required column missing: "club" / "team"');
-  if (!colProj) errors.push('Required column missing: "proj_score" / "projection"');
+  if (colProj.length === 0) {
+    errors.push('Required column missing: projection (e.g. "proj_score" / "data_projected")');
+  }
   if (!colBye) errors.push('Required column missing: "bye"');
 
-  if (!colName || !colPos || !colClub || !colProj || !colBye) {
+  if (!colName || !colPos || !colClub || colProj.length === 0 || !colBye) {
     return { players: [], errors };
   }
 
@@ -124,9 +177,12 @@ export function parseCsv(input: string): {
       continue;
     }
 
-    const projScore = parseFloat(row[colProj]);
+    const projScore = parseProjectionScore(row, colProj);
     if (isNaN(projScore)) {
-      errors.push(`Skipping "${name}": invalid proj_score "${row[colProj]}"`);
+      const rawProjectionValues = colProj
+        .map((col) => `${col}="${row[col] ?? ""}"`)
+        .join(", ");
+      errors.push(`Skipping "${name}": invalid projection (${rawProjectionValues})`);
       continue;
     }
 
@@ -146,8 +202,8 @@ export function parseCsv(input: string): {
     const togPct = colTogPct ? parseFloat(row[colTogPct]) : NaN;
     const adpValueGap = colAdpValueGap ? parseFloat(row[colAdpValueGap]) : NaN;
     const variance = colVariance ? parseFloat(row[colVariance]) : NaN;
-    const avgScore2025 = colAvgScore2025 ? parseFloat(row[colAvgScore2025]) : NaN;
-    const maxScore2025 = colMaxScore2025 ? parseFloat(row[colMaxScore2025]) : NaN;
+    const avgScore2025 = parseFirstNumeric(row, colAvgScore2025);
+    const maxScore2025 = parseFirstNumeric(row, colMaxScore2025);
 
     players.push({
       id,

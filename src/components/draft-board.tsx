@@ -31,28 +31,41 @@ const DEFAULT_COLUMN_ORDER: ColumnOrderState = [
   "rank",
   "name",
   "positionString",
+  "avgScore2025",
   "projScore",
   "pickNowScore",
+  "category",
+  "adp",
+  "games2025",
+  "notes",
+  "action",
   "vorp",
   "finalValue",
   "smartRank",
   "vona",
   "bye",
-  "category",
-  "adp",
   "risk",
-  "games2025",
-  "avgScore2025",
   "consistencyScore",
   "cbaPct",
   "adpValueGap",
   "maxScore2025",
-  "notes",
-  "action",
 ];
 
+const DEFAULT_VISIBLE_COLUMNS = new Set([
+  "rank",
+  "name",
+  "positionString",
+  "avgScore2025",
+  "projScore",
+  "pickNowScore",
+  "category",
+  "adp",
+  "games2025",
+  "notes",
+]);
+
 const DEFAULT_COLUMN_VISIBILITY: VisibilityState = Object.fromEntries(
-  DEFAULT_COLUMN_ORDER.map((id) => [id, true])
+  DEFAULT_COLUMN_ORDER.map((id) => [id, DEFAULT_VISIBLE_COLUMNS.has(id)])
 ) as VisibilityState;
 
 const COLUMN_LABELS: Record<string, string> = {
@@ -60,7 +73,7 @@ const COLUMN_LABELS: Record<string, string> = {
   name: "Player",
   positionString: "Pos",
   projScore: "Proj",
-  pickNowScore: "PickNow",
+  pickNowScore: "Pick now",
   vorp: "VORP",
   finalValue: "Value",
   smartRank: "Smart",
@@ -70,7 +83,7 @@ const COLUMN_LABELS: Record<string, string> = {
   adp: "ADP",
   risk: "Risk",
   games2025: "Gms25",
-  avgScore2025: "Avg25",
+  avgScore2025: "Avg 25",
   consistencyScore: "Cons",
   cbaPct: "CBA%",
   adpValueGap: "Gap",
@@ -79,10 +92,10 @@ const COLUMN_LABELS: Record<string, string> = {
   action: "Draft",
 };
 
-const COLUMN_ORDER_STORAGE_KEY = "afl:draft-board:column-order:v1";
-const COLUMN_VISIBILITY_STORAGE_KEY = "afl:draft-board:column-visibility:v1";
+const COLUMN_ORDER_STORAGE_KEY = "afl:draft-board:column-order:v2";
+const COLUMN_VISIBILITY_STORAGE_KEY = "afl:draft-board:column-visibility:v2";
 const NON_DRAGGABLE_COLUMNS = new Set(["action"]);
-const NON_TOGGLEABLE_COLUMNS = new Set(["action"]);
+const NON_TOGGLEABLE_COLUMNS = new Set<string>();
 
 function sanitiseColumnOrder(order: unknown): ColumnOrderState {
   const allowed = new Set(DEFAULT_COLUMN_ORDER);
@@ -115,8 +128,13 @@ function sanitiseColumnVisibility(visibility: unknown): VisibilityState {
   return next;
 }
 
-function textIndicatesSeasonOut(text: string): boolean {
-  const lower = text.toLowerCase();
+function normaliseText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function textIndicatesSeasonOut(text: string | null | undefined): boolean {
+  const lower = normaliseText(text).toLowerCase();
+  if (!lower) return false;
   return (
     lower.includes("out for season") ||
     lower.includes("season-ending") ||
@@ -129,12 +147,32 @@ function textIndicatesSeasonOut(text: string): boolean {
 
 function getAvailabilityIssue(player: PlayerWithMetrics): string | null {
   if (textIndicatesSeasonOut(player.injury) || textIndicatesSeasonOut(player.notes)) {
-    const source = player.injury.trim() || player.notes.trim();
+    const source = normaliseText(player.injury) || normaliseText(player.notes);
     return `Season-out flag: ${source || "Marked unavailable for season"}`;
   }
-  if (player.injury.trim()) return `Injury note: ${player.injury.trim()}`;
-  if (player.risk.trim().toLowerCase() === "high") return "High risk profile";
+  const injury = normaliseText(player.injury);
+  const risk = normaliseText(player.risk).toLowerCase();
+  if (injury) return `Injury note: ${injury}`;
+  if (risk === "high") return "High risk profile";
   return null;
+}
+
+function shortPlayerName(name: string): string {
+  const clean = name.trim();
+  if (!clean) return "";
+  if (clean.length <= 18) return clean;
+
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return clean;
+
+  const firstInitial = parts[0].charAt(0).toUpperCase();
+  let surname = parts[parts.length - 1];
+  if (surname.includes("-")) {
+    const hyphenParts = surname.split("-").filter(Boolean);
+    surname = hyphenParts[hyphenParts.length - 1] || surname;
+  }
+  surname = surname.charAt(0).toUpperCase() + surname.slice(1);
+  return `${firstInitial}.${surname}`;
 }
 
 function vorpHeatColor(value: number, max: number): string {
@@ -344,11 +382,11 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         id: "rank",
         header: "#",
-        size: 45,
+        size: 50,
         cell: ({ row, table }) => {
           const sortedRows = table.getRowModel().rows;
           const rank = sortedRows.findIndex((r) => r.id === row.id) + 1;
-          return <span className="text-xs text-zinc-400">{rank}</span>;
+          return <span className="text-sm text-zinc-400">{rank}</span>;
         },
         enableSorting: false,
         enableHiding: false,
@@ -356,31 +394,35 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "name",
         header: "Player",
-        size: 190,
+        size: 205,
         cell: ({ row }) => {
           const p = row.original;
           const issue = getAvailabilityIssue(p);
+          const displayName = shortPlayerName(p.name);
           return (
-            <div className="flex flex-col">
-              <span className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="flex min-w-0 items-center gap-1">
                 <span
                   className={clsx(
-                    "font-medium",
+                    "truncate text-sm font-medium",
                     p.isDrafted && "text-zinc-400 line-through"
                   )}
+                  title={p.name}
                 >
-                  {p.name}
+                  {displayName}
+                </span>
+                <span className="shrink-0 text-[11px] uppercase tracking-wide text-zinc-500">
+                  {p.club}
                 </span>
                 {issue && (
                   <span
-                    className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:bg-rose-900/60 dark:text-rose-200"
+                    className="shrink-0 rounded bg-rose-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:bg-rose-900/60 dark:text-rose-200"
                     title={issue}
                   >
                     Flag
                   </span>
                 )}
               </span>
-              <span className="text-xs text-zinc-500">{p.club}</span>
             </div>
           );
         },
@@ -388,14 +430,14 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "positionString",
         header: "Pos",
-        size: 85,
+        size: 98,
         cell: ({ row }) => (
           <div className="flex gap-1">
             {row.original.positions.map((pos) => (
               <span
                 key={pos}
                 className={clsx(
-                  "rounded px-1.5 py-0.5 text-xs font-medium text-white",
+                  "rounded px-1.5 py-0.5 text-[11px] font-medium text-white",
                   POSITION_COLORS[pos]
                 )}
               >
@@ -408,7 +450,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "projScore",
         header: "Proj",
-        size: 60,
+        size: 72,
         cell: ({ getValue }) => (
           <span className="font-mono text-sm">{(getValue() as number).toFixed(1)}</span>
         ),
@@ -419,10 +461,10 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           <span
             title={`Pick-Now score (single recommendation metric).\nSmartNorm + weighted VONA + weighted Value + weighted Consistency - weighted Risk\n${phaseSummary}`}
           >
-            PickNow
+            Pick now
           </span>
         ),
-        size: 80,
+        size: 90,
         cell: ({ row }) => {
           const p = row.original;
           const n = normByPlayerId.get(p.id);
@@ -448,7 +490,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             VORP
           </span>
         ),
-        size: 62,
+        size: 68,
         cell: ({ row }) => (
           <span
             className={clsx(
@@ -466,7 +508,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         header: () => (
           <span title={`Value = best-position VORP + DPP bonus.\n${phaseSummary}`}>Value</span>
         ),
-        size: 65,
+        size: 72,
         cell: ({ row }) => (
           <span
             className={clsx(
@@ -486,7 +528,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             Smart
           </span>
         ),
-        size: 65,
+        size: 72,
         cell: ({ row }) => (
           <span
             className="font-mono text-sm"
@@ -503,7 +545,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             VONA
           </span>
         ),
-        size: 60,
+        size: 66,
         cell: ({ getValue }) => {
           const v = getValue() as number | null;
           if (v == null) return <span className="text-zinc-400">-</span>;
@@ -529,13 +571,13 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "category",
         header: "Cat",
-        size: 85,
+        size: 90,
         cell: ({ getValue }) => {
           const cat = getValue() as string;
           return (
             <span
               className={clsx(
-                "rounded-full px-2 py-0.5 text-xs font-medium",
+                "rounded-full px-2 py-0.5 text-[11px] font-medium",
                 CATEGORY_COLORS[cat] || CATEGORY_COLORS.uncategorised
               )}
             >
@@ -547,7 +589,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "adp",
         header: "ADP",
-        size: 50,
+        size: 58,
         cell: ({ getValue }) => {
           const v = getValue() as number | null;
           return <span className="font-mono text-sm">{v ?? "-"}</span>;
@@ -570,7 +612,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           return (
             <span
               className={clsx(
-                "text-xs font-medium",
+                "text-sm font-medium",
                 label === "High" && "text-red-600 dark:text-red-400",
                 label === "Medium" && "text-yellow-600 dark:text-yellow-400",
                 label === "Low" && "text-green-600 dark:text-green-400"
@@ -590,7 +632,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             Gms25
           </span>
         ),
-        size: 55,
+        size: 60,
         cell: ({ row }) => (
           <span
             className="font-mono text-sm"
@@ -607,7 +649,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             Avg25
           </span>
         ),
-        size: 58,
+        size: 72,
         cell: ({ getValue }) => {
           const v = getValue() as number | null;
           return <span className="font-mono text-sm">{v == null ? "-" : v.toFixed(1)}</span>;
@@ -618,7 +660,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         header: () => (
           <span title={`Consistency score derived from games played in 2025 (soft factor).`}>Cons</span>
         ),
-        size: 55,
+        size: 64,
         cell: ({ getValue }) => {
           const v = getValue() as number;
           return (
@@ -641,7 +683,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             CBA%
           </span>
         ),
-        size: 52,
+        size: 58,
         cell: ({ getValue }) => {
           const v = getValue() as number | null;
           if (v == null) return <span className="text-zinc-400">-</span>;
@@ -665,7 +707,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             Gap
           </span>
         ),
-        size: 48,
+        size: 58,
         cell: ({ row, getValue }) => {
           const v = getValue() as number | null;
           if (v == null) return <span className="text-zinc-400">-</span>;
@@ -689,7 +731,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         header: () => (
           <span title={`Best single-game score in 2025 (ceiling indicator).`}>Max</span>
         ),
-        size: 45,
+        size: 56,
         cell: ({ getValue }) => {
           const v = getValue() as number | null;
           return <span className="font-mono text-sm">{v ?? "-"}</span>;
@@ -698,7 +740,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "notes",
         header: "Notes",
-        size: 220,
+        size: 300,
         cell: ({ getValue }) => {
           const note = (getValue() as string) || "";
           if (!note.trim()) return <span className="text-zinc-400">-</span>;
@@ -878,7 +920,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
-        <table className="w-full text-left">
+        <table className="w-full text-left text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/50">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
@@ -889,7 +931,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                     <th
                       key={header.id}
                       className={clsx(
-                        "px-2 py-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400",
+                        "px-2 py-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400",
                         header.column.getCanSort() &&
                           "cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-200",
                         isDraggable && "cursor-grab",
@@ -947,11 +989,15 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                     "border-b border-zinc-100 transition-colors dark:border-zinc-800",
                     row.original.isDrafted
                       ? "bg-zinc-50/50 opacity-50 dark:bg-zinc-900/30"
-                      : "hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                      : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
                     row.original.category === "smoky" &&
                       !row.original.isDrafted &&
                       "border-l-2 border-l-orange-400"
                   )}
+                  onClick={() => {
+                    if (!row.original.isDrafted) onDraftClick(row.original.id);
+                  }}
+                  title={row.original.isDrafted ? undefined : "Click row to draft"}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td key={cell.id} className="px-2 py-1.5">
@@ -963,7 +1009,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={table.getVisibleLeafColumns().length} className="px-4 py-8 text-center text-sm text-zinc-500">
+                <td colSpan={table.getVisibleLeafColumns().length} className="px-3 py-6 text-center text-sm text-zinc-500">
                   No players match your filters
                 </td>
               </tr>

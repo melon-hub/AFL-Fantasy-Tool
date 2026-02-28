@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LayoutGrid,
   Users,
@@ -56,7 +56,17 @@ export default function Home() {
     setSidebarOpen,
     draftModalPlayerId,
     setDraftModalPlayerId,
+    liveSyncSnapshot,
   } = useUiStore();
+
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowTs(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Recalculate VORP on every render (players/settings change)
   const playersWithMetrics = useMemo(
@@ -69,6 +79,10 @@ export default function Home() {
 
   const draftedCount = players.filter((p) => p.isDrafted).length;
   const availableCount = players.length - draftedCount;
+  const nextSyncCountdownSec = useMemo(() => {
+    if (!liveSyncSnapshot.isActive || !liveSyncSnapshot.nextPollAt) return null;
+    return Math.max(0, Math.ceil((liveSyncSnapshot.nextPollAt - nowTs) / 1000));
+  }, [liveSyncSnapshot.isActive, liveSyncSnapshot.nextPollAt, nowTs]);
 
   const modalPlayer = draftModalPlayerId
     ? playersWithMetrics.find((p) => p.id === draftModalPlayerId)
@@ -157,6 +171,37 @@ export default function Home() {
               #{currentOverallPick}
             </strong>
           </span>
+          <span className="h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={clsx(
+                "h-2 w-2 rounded-full",
+                liveSyncSnapshot.statusColor === "green" && "bg-green-500",
+                liveSyncSnapshot.statusColor === "yellow" && "bg-yellow-500",
+                liveSyncSnapshot.statusColor === "red" && "bg-red-500",
+                liveSyncSnapshot.statusColor === "gray" && "bg-zinc-300 dark:bg-zinc-600"
+              )}
+            />
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">
+              {liveSyncSnapshot.isActive ? "Live Sync" : "Sync Off"}
+            </span>
+          </span>
+          {liveSyncSnapshot.isActive && (
+            <span className="hidden lg:inline">
+              next sync in{" "}
+              <strong className="text-zinc-700 dark:text-zinc-300">
+                {nextSyncCountdownSec ?? "—"}s
+              </strong>
+            </span>
+          )}
+          {liveSyncSnapshot.isActive && liveSyncSnapshot.onClockLabel && (
+            <span className="hidden xl:inline">
+              on clock{" "}
+              <strong className="text-zinc-700 dark:text-zinc-300">
+                {liveSyncSnapshot.onClockLabel}
+              </strong>
+            </span>
+          )}
         </div>
       </header>
 
@@ -207,7 +252,7 @@ export default function Home() {
 
           {/* Intelligence panel — visible on Draft Board tab */}
           {activeTab === "board" && (
-            <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-zinc-200 p-4 lg:block dark:border-zinc-700">
+            <aside className="hidden w-[26rem] shrink-0 overflow-y-auto border-l border-zinc-200 p-3 lg:block dark:border-zinc-700">
               <IntelligencePanel
                 players={playersWithMetrics}
                 settings={settings}

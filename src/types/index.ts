@@ -114,7 +114,11 @@ export interface DraftPick {
   playerName: string;
   position: string;
   teamNumber: number; // 1–6
+  teamName?: string | null; // External team label from AFL live sync
+  sourceTeamId?: string | null; // External AFL team id
   overallPick: number; // 1, 2, 3…
+  round?: number | null; // External round number, when available
+  pickInRound?: number | null; // Pick inside round, when available
   timestamp: number;
 }
 
@@ -126,7 +130,18 @@ export interface DraftState {
 
   // Actions
   loadPlayers: (players: Player[]) => void;
-  draftPlayer: (playerId: string, teamNumber: number) => void;
+  draftPlayer: (
+    playerId: string,
+    teamNumber: number,
+    options?: {
+      overallPick?: number;
+      teamName?: string | null;
+      sourceTeamId?: string | null;
+      round?: number | null;
+      pickInRound?: number | null;
+    }
+  ) => void;
+  setCurrentOverallPick: (pick: number) => void;
   undraftPlayer: (playerId: string) => void;
   undoLastPick: () => void;
   undoLastN: (n: number) => void;

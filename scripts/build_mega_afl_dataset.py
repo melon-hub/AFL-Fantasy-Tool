@@ -6,6 +6,8 @@ This script merges:
 2) AFL-Fantasy-Draft-2026-Ultimate-Spreadsheet.xlsx
 3) 2026-AF-Ranks-v2-8wtts9.xlsx
 4) data.csv
+5) afl-fantasy-2026.xlsx (optional, extra AFL Fantasy metrics)
+6) afl-stats-1772271394545.csv (optional, game-log derived validation metrics)
 
 It writes:
 - data/processed/mega-afl-dataset.csv (full context)
@@ -32,14 +34,15 @@ except Exception:  # pragma: no cover - optional dependency in local envs
     PdfReader = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DOWNLOADS = Path.home() / "Downloads"
-
-DEFAULT_RANKINGS_CSV = DEFAULT_DOWNLOADS / "rankings-afl-fantasy-2026-02-28.csv"
-DEFAULT_ULTIMATE_XLSX = DEFAULT_DOWNLOADS / "AFL-Fantasy-Draft-2026-Ultimate-Spreadsheet.xlsx"
-DEFAULT_EXPERT_XLSX = DEFAULT_DOWNLOADS / "2026-AF-Ranks-v2-8wtts9.xlsx"
-DEFAULT_DATA_CSV = DEFAULT_DOWNLOADS / "data.csv"
-DEFAULT_DRAFT_DOCTORS_PDF = DEFAULT_DOWNLOADS / "2026-Draft-Kit-gs7zws.pdf"
-DEFAULT_OFFICIAL_DRAFT_PDF = DEFAULT_DOWNLOADS / "2026-AFL-Fantasy-Draft-Kit.pdf"
+DEFAULT_SOURCES_DIR = ROOT / "data" / "sources"
+DEFAULT_RANKINGS_CSV = DEFAULT_SOURCES_DIR / "rankings-afl-fantasy-2026-02-28.csv"
+DEFAULT_ULTIMATE_XLSX = DEFAULT_SOURCES_DIR / "AFL-Fantasy-Draft-2026-Ultimate-Spreadsheet.xlsx"
+DEFAULT_EXPERT_XLSX = DEFAULT_SOURCES_DIR / "2026-AF-Ranks-v2-8wtts9.xlsx"
+DEFAULT_DATA_CSV = DEFAULT_SOURCES_DIR / "data.csv"
+DEFAULT_DRAFT_DOCTORS_PDF = DEFAULT_SOURCES_DIR / "2026-Draft-Kit-gs7zws.pdf"
+DEFAULT_OFFICIAL_DRAFT_PDF = DEFAULT_SOURCES_DIR / "2026-AFL-Fantasy-Draft-Kit.pdf"
+DEFAULT_AFL_FANTASY_XLSX = DEFAULT_SOURCES_DIR / "afl-fantasy-2026.xlsx"
+DEFAULT_AFL_STATS_CSV = DEFAULT_SOURCES_DIR / "afl-stats-1772271394545.csv"
 
 DEFAULT_FULL_OUT = ROOT / "data" / "processed" / "mega-afl-dataset.csv"
 DEFAULT_APP_OUT = ROOT / "data" / "processed" / "players-2026-app-upload.csv"
@@ -340,6 +343,135 @@ def load_ultimate_xlsx(path: Path) -> list[dict[str, str]]:
     return records
 
 
+def dedupe_headers(headers: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: dict[str, int] = {}
+    for raw in headers:
+        base = raw.strip()
+        if not base:
+            deduped.append("")
+            continue
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        deduped.append(base if count == 1 else f"{base}_{count}")
+    return deduped
+
+
+def load_afl_fantasy_xlsx(path: Path) -> list[dict[str, str]]:
+    with zipfile.ZipFile(path) as zf:
+        shared = load_shared_strings(zf)
+        sheet_name, sheet_path = workbook_sheets(zf)[0]
+        if not sheet_path:
+            raise RuntimeError(f"Unable to resolve sheet path in {path} ({sheet_name}).")
+        rows = read_sheet_rows(zf, sheet_path, shared)
+
+    header_idx = None
+    for i, row in enumerate(rows):
+        values = [cell.strip() for cell in row]
+        if "Player" in values and "Team" in values and "100+" in values and "120+" in values:
+            header_idx = i
+            break
+    if header_idx is None:
+        return []
+
+    headers = dedupe_headers(rows[header_idx])
+    records: list[dict[str, str]] = []
+    for row in rows[header_idx + 1 :]:
+        if not row:
+            continue
+        player = row[0].strip() if row else ""
+        if not player:
+            continue
+        record: dict[str, str] = {}
+        for i, header in enumerate(headers):
+            if not header:
+                continue
+            record[header] = row[i] if i < len(row) else ""
+        records.append(record)
+    return records
+
+
+def load_afl_stats_summary_csv(path: Path, season_year: int = 2025) -> list[dict[str, Any]]:
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        raw_rows = list(csv.reader(f))
+
+    header_idx = None
+    for i, row in enumerate(raw_rows):
+        if len(row) >= 5 and row[:5] == ["player", "team", "opponent", "year", "round"]:
+            header_idx = i
+            break
+    if header_idx is None:
+        return []
+
+    header = raw_rows[header_idx]
+    col = {name: idx for idx, name in enumerate(header)}
+    required = {"player", "team", "year", "round", "fantasyPoints"}
+    if not required.issubset(col):
+        return []
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in raw_rows[header_idx + 1 :]:
+        if len(row) < len(header):
+            row = row + [""] * (len(header) - len(row))
+
+        player = row[col["player"]].strip()
+        team = row[col["team"]].strip().upper()
+        year = safe_int(row[col["year"]])
+        round_no = safe_int(row[col["round"]])
+        points = safe_float(row[col["fantasyPoints"]])
+        if not player or not team or year != season_year or points is None or round_no is None:
+            continue
+
+        key = (canonical_key(player), team)
+        rec = grouped.get(key)
+        if rec is None:
+            rec = {
+                "Player": player,
+                "Team": team,
+                "points": [],
+                "reg_points": [],
+                "l5_points": [],
+                "fin_points": [],
+            }
+            grouped[key] = rec
+
+        rec["points"].append(float(points))
+        if round_no <= 24:
+            rec["reg_points"].append(float(points))
+        if 20 <= round_no <= 24:
+            rec["l5_points"].append(float(points))
+        if round_no >= 25:
+            rec["fin_points"].append(float(points))
+
+    records: list[dict[str, Any]] = []
+    for rec in grouped.values():
+        points = rec["points"]
+        reg_points = rec["reg_points"]
+        l5_points = rec["l5_points"]
+        fin_points = rec["fin_points"]
+        if not points:
+            continue
+
+        records.append(
+            {
+                "Player": rec["Player"],
+                "Team": rec["Team"],
+                "stats_games_2025_all": len(points),
+                "stats_avg_2025_all": round(statistics.mean(points), 3),
+                "stats_max_2025_all": round(max(points), 3),
+                "stats_100_plus_2025_all": sum(1 for x in points if x >= 100.0),
+                "stats_120_plus_2025_all": sum(1 for x in points if x >= 120.0),
+                "stats_stddev_2025_all": round(statistics.pstdev(points), 3),
+                "stats_reg_games_2025": len(reg_points),
+                "stats_reg_avg_2025": round(statistics.mean(reg_points), 3) if reg_points else None,
+                "stats_l5_avg_2025": round(statistics.mean(l5_points), 3) if l5_points else None,
+                "stats_finals_games_2025": len(fin_points),
+                "stats_finals_avg_2025": round(statistics.mean(fin_points), 3) if fin_points else None,
+            }
+        )
+    return records
+
+
 def load_expert_xlsx(path: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
     entries: list[dict[str, Any]] = []
     sheet_sizes: dict[str, int] = {}
@@ -510,6 +642,42 @@ MANUAL_PLAYER_OVERRIDES: dict[str, dict[str, str]] = {
     nkey("Gryan Miers"): {"category": "value"},
     nkey("Christian Petracca"): {"category": "premium"},
     # Additional smoky/watchlist ideas.
+    nkey("James Peatling"): {
+        "category": "smoky",
+        "note": "New best-23 midfield role after GWS move; strong breakout profile.",
+    },
+    nkey("Harvey Langford"): {
+        "category": "smoky",
+        "note": "Second-year breakout candidate with projected role certainty.",
+    },
+    nkey("Riley Hardeman"): {
+        "category": "smoky",
+        "note": "Defensive distributor upside with preseason role hype.",
+    },
+    nkey("Zeke Uwland"): {
+        "category": "smoky",
+        "note": "DPP bench stash with strong junior scoring profile and early-opportunity upside.",
+    },
+    nkey("Sam Grlj"): {
+        "category": "smoky",
+        "note": "Run-and-carry defender profile with breakout signs in match simulation.",
+    },
+    nkey("Samuel Grlj"): {
+        "category": "smoky",
+        "note": "Run-and-carry defender profile with breakout signs in match simulation.",
+    },
+    nkey("Willem Duursma"): {
+        "category": "smoky",
+        "note": "High-upside early-career MID with plausible round-one role.",
+    },
+    nkey("Jagga Smith"): {
+        "category": "smoky",
+        "note": "Ball-magnet rookie with immediate draft relevance if role and fitness hold.",
+    },
+    nkey("Jack Ross"): {
+        "category": "smoky",
+        "note": "MID/FWD swing option with midfield-minute upside for late rounds.",
+    },
     nkey("Tom McCarthy"): {
         "category": "smoky",
         "note": "Likely to spend more midfield time this year; late draft upside if role sticks.",
@@ -536,7 +704,7 @@ MANUAL_PLAYER_OVERRIDES: dict[str, dict[str, str]] = {
     },
     nkey("Harry Rowston"): {
         "category": "smoky",
-        "note": "Late smoky if midfield opportunity opens at GWS.",
+        "note": "Filling a major midfield void at GWS; clear late-round upside.",
     },
     nkey("Nicholas Madden"): {
         "category": "smoky",
@@ -548,11 +716,27 @@ MANUAL_PLAYER_OVERRIDES: dict[str, dict[str, str]] = {
     },
     nkey("Lachlan McAndrew"): {
         "category": "smoky",
-        "note": "Ruck depth smoky with potential early-season opportunity.",
+        "note": "Ruck cash-cow candidate with realistic early-season opportunity.",
     },
     nkey("Max Hall"): {
         "category": "smoky",
-        "note": "Club-rated upside option; worth late-pick consideration.",
+        "note": "Forward-eligible upside option with midfield-time pathway.",
+    },
+    nkey("Ryan Maric"): {
+        "category": "smoky",
+        "note": "Defensive distributor role with meaningful year-on-year scoring jump.",
+    },
+    nkey("Lincoln McCarthy"): {
+        "category": "smoky",
+        "note": "Role-shift upside candidate with late-round bench value.",
+    },
+    nkey("Will Hayward"): {
+        "category": "smoky",
+        "note": "Forward value play if link-up role continues higher up the ground.",
+    },
+    nkey("Ben Ainsworth"): {
+        "category": "smoky",
+        "note": "Bounce-back forward with multiple prior 75+ fantasy seasons.",
     },
     nkey("Connor Macdonald"): {
         "category": "smoky",
@@ -591,16 +775,16 @@ MANUAL_PLAYER_OVERRIDES: dict[str, dict[str, str]] = {
         "note": "Likely to get games and can be a bench/late flyer.",
     },
     # Extra rookie watchlist mentions.
-    nkey("Zeke Uwland"): {"category": "rookie", "note": "Rookie watchlist option."},
+    nkey("Zeke Uwland"): {"category": "smoky", "note": "Rookie watchlist option with upside role path."},
     nkey("Harry Dean"): {"category": "rookie", "note": "Rookie watchlist option."},
     nkey("Jordan Boyd"): {"category": "rookie", "note": "Rookie watchlist if selected."},
-    nkey("Sam Grlj"): {"category": "rookie", "note": "Rookie watchlist option."},
+    nkey("Sam Grlj"): {"category": "smoky", "note": "Rookie watchlist option with run-and-carry upside."},
     nkey("Jacob Farrow"): {"category": "rookie", "note": "Rookie watchlist option."},
     nkey("Josh Lindsay"): {"category": "rookie", "note": "Rookie watchlist option."},
     nkey("Jai Serong"): {"category": "rookie", "note": "Rookie watchlist option."},
     nkey("Lachie Jacques"): {"category": "rookie", "note": "Rookie watchlist option."},
     nkey("Wade Derksen"): {"category": "rookie", "note": "Rookie watchlist option."},
-    nkey("Jagga Smith"): {"category": "rookie", "note": "Rookie watchlist option."},
+    nkey("Jagga Smith"): {"category": "smoky", "note": "Rookie watchlist option with immediate cash-cow appeal."},
     nkey("Arthur Jones"): {"category": "rookie", "note": "Rookie watchlist option."},
 }
 
@@ -750,8 +934,12 @@ def build_datasets(
     expert_sheet_sizes: dict[str, int],
     data_rows: list[dict[str, str]],
     reference_date: dt.date,
+    afl_fantasy_rows: list[dict[str, str]] | None = None,
+    afl_stats_rows: list[dict[str, Any]] | None = None,
     pdf_sources: list[tuple[str, list[str]]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    afl_fantasy_rows = afl_fantasy_rows or []
+    afl_stats_rows = afl_stats_rows or []
     pdf_sources = pdf_sources or []
     records: dict[str, dict[str, Any]] = {}
     mapping_stats = {
@@ -772,6 +960,8 @@ def build_datasets(
                 "ultimate": None,
                 "rankings": None,
                 "data": None,
+                "afl_fantasy": None,
+                "afl_stats": None,
                 "expert_ranks": {},  # pos -> analyst -> rank
             }
             records[key] = rec
@@ -827,7 +1017,42 @@ def build_datasets(
         rec["sources"].add("data")
         rec["data"] = row
 
-    # 4) Merge expert positional rankings.
+    # 4) Merge AFL Fantasy 2026 workbook metrics.
+    for row in afl_fantasy_rows:
+        name = (row.get("Player") or "").strip()
+        if not name:
+            continue
+        club = (row.get("Team") or "").strip().upper()
+        raw_key = canonical_key(name)
+        matched_key = raw_key if raw_key in records else match_existing_key(name, club, records, threshold=0.88)
+        if matched_key and matched_key != raw_key:
+            mapping_stats["fuzzy_matches"] += 1
+        key = matched_key or raw_key
+        rec = ensure_record(key, fallback_name=name)
+        rec["name"] = rec["name"] or name
+        rec["club"] = first_non_null(club, rec["club"]) or ""
+        rec["pos"] = first_non_null(normalize_position(row.get("Position")), rec["pos"]) or ""
+        rec["sources"].add("afl_fantasy")
+        rec["afl_fantasy"] = row
+
+    # 5) Merge AFL game-log derived summary metrics.
+    for row in afl_stats_rows:
+        name = (row.get("Player") or "").strip()
+        if not name:
+            continue
+        club = (row.get("Team") or "").strip().upper()
+        raw_key = canonical_key(name)
+        matched_key = raw_key if raw_key in records else match_existing_key(name, club, records, threshold=0.88)
+        if matched_key and matched_key != raw_key:
+            mapping_stats["fuzzy_matches"] += 1
+        key = matched_key or raw_key
+        rec = ensure_record(key, fallback_name=name)
+        rec["name"] = rec["name"] or name
+        rec["club"] = first_non_null(club, rec["club"]) or ""
+        rec["sources"].add("afl_stats")
+        rec["afl_stats"] = row
+
+    # 6) Merge expert positional rankings.
     for row in expert_rows:
         name = row["player"]
         raw_key = canonical_key(name)
@@ -844,12 +1069,14 @@ def build_datasets(
         if prev is None or row["rank"] < prev:
             pos_map[row["analyst"]] = row["rank"]
 
-    # 5) Build output rows.
+    # 7) Build output rows.
     output_rows: list[dict[str, Any]] = []
     for rec in records.values():
         r_csv = rec["rankings"] or {}
         r_u = rec["ultimate"] or {}
         r_d = rec["data"] or {}
+        r_af = rec["afl_fantasy"] or {}
+        r_stats = rec["afl_stats"] or {}
 
         name = rec["name"].strip()
         if not name:
@@ -896,15 +1123,51 @@ def build_datasets(
         bye = next((b for b in bye_values if b is not None), None)
 
         age = parse_age_from_dob(r_u.get("DOB"), reference_date)
-        games25 = first_non_null(safe_int(r_u.get("GMS")), safe_int(r_d.get("Gm.25")))
+        games25 = first_non_null(
+            safe_int(r_u.get("GMS")),
+            safe_int(r_d.get("Gm.25")),
+            safe_int(r_af.get("GMS")),
+            safe_int(r_stats.get("stats_reg_games_2025")),
+        )
         # Canonical 2025 average for app use:
         # prefer Ultimate sheet AVG (closest to actual AFL Fantasy season average),
         # fallback to rankings CSV 2025 Avg if missing.
         ultimate_avg_2025 = safe_float(r_u.get("AVG"))
+        afl_reg_avg_2025 = safe_float(r_af.get("REG"))
+        stats_reg_avg_2025 = safe_float(r_stats.get("stats_reg_avg_2025"))
         rankings_avg_2025 = safe_float(r_csv.get("2025 Avg"))
-        avg_score_2025 = first_non_null(ultimate_avg_2025, rankings_avg_2025)
+        avg_score_2025 = first_non_null(ultimate_avg_2025, afl_reg_avg_2025, stats_reg_avg_2025, rankings_avg_2025)
         if avg_score_2025 is not None:
             avg_score_2025 = round(avg_score_2025, 1)
+
+        # Additional 2025 coverage from the new AFL Fantasy workbook and game-log summary.
+        afl_games_2025_all = safe_int(r_af.get("GMS"))
+        afl_fp_2025_all = safe_float(r_af.get("FP"))
+        afl_max_2025 = safe_float(r_af.get("MAX"))
+        afl_100_plus_2025 = safe_int(r_af.get("100+"))
+        afl_120_plus_2025 = safe_int(r_af.get("120+"))
+        afl_cba_pct_2025 = safe_float(r_af.get("CBA%"))
+        afl_ppm_2025 = safe_float(r_af.get("PPM"))
+        afl_l5_avg_2025 = safe_float(r_af.get("L5"))
+        afl_finals_avg_2025 = safe_float(r_af.get("FIN"))
+        afl_salary = safe_int(r_af.get("Salary"))
+        afl_owned_pct = safe_float(r_af.get("Owned"))
+
+        stats_games_2025_all = safe_int(r_stats.get("stats_games_2025_all"))
+        stats_avg_2025_all = safe_float(r_stats.get("stats_avg_2025_all"))
+        stats_max_2025_all = safe_float(r_stats.get("stats_max_2025_all"))
+        stats_100_plus_2025_all = safe_int(r_stats.get("stats_100_plus_2025_all"))
+        stats_120_plus_2025_all = safe_int(r_stats.get("stats_120_plus_2025_all"))
+        stats_stddev_2025_all = safe_float(r_stats.get("stats_stddev_2025_all"))
+        stats_reg_games_2025 = safe_int(r_stats.get("stats_reg_games_2025"))
+        stats_l5_avg_2025 = safe_float(r_stats.get("stats_l5_avg_2025"))
+        stats_finals_games_2025 = safe_int(r_stats.get("stats_finals_games_2025"))
+        stats_finals_avg_2025 = safe_float(r_stats.get("stats_finals_avg_2025"))
+
+        # Prefer the richer AFL Fantasy workbook when available, fallback to original Ultimate columns.
+        ultimate_x100_2025 = first_non_null(afl_100_plus_2025, safe_int(r_u.get("x100")))
+        ultimate_x120_2025 = first_non_null(afl_120_plus_2025, safe_int(r_u.get("x120")))
+        ultimate_cba_pct = first_non_null(afl_cba_pct_2025, safe_float(r_u.get("CBA%")))
 
         relative_value = safe_float(r_d.get("Relative Value"))
         vs_next_pick = safe_float(r_d.get("vs. Next Pick"))
@@ -1111,14 +1374,37 @@ def build_datasets(
                 "ultimate_avg_2025": safe_float(r_u.get("AVG")),
                 "ultimate_games_2025": safe_int(r_u.get("GMS")),
                 "ultimate_max_2025": safe_float(r_u.get("MAX")),
-                "ultimate_x100_2025": safe_int(r_u.get("x100")),
-                "ultimate_x120_2025": safe_int(r_u.get("x120")),
+                "ultimate_x100_2025": ultimate_x100_2025,
+                "ultimate_x120_2025": ultimate_x120_2025,
                 "ultimate_tog_pct": safe_float(r_u.get("TOG%")),
-                "ultimate_cba_pct": safe_float(r_u.get("CBA%")),
+                "ultimate_cba_pct": ultimate_cba_pct,
                 "ultimate_avg_2024": safe_float(r_u.get("2024_AVG")),
                 "ultimate_games_2024": safe_int(r_u.get("2024_GMS")),
                 "ultimate_avg_2023": safe_float(r_u.get("2023_AVG")),
                 "ultimate_games_2023": safe_int(r_u.get("2023_GMS")),
+                "afl_2025_games_all": afl_games_2025_all,
+                "afl_2025_fp_all": afl_fp_2025_all,
+                "afl_2025_reg_avg": afl_reg_avg_2025,
+                "afl_2025_l5_avg": afl_l5_avg_2025,
+                "afl_2025_finals_avg": afl_finals_avg_2025,
+                "afl_2025_max": afl_max_2025,
+                "afl_2025_100_plus": afl_100_plus_2025,
+                "afl_2025_120_plus": afl_120_plus_2025,
+                "afl_2025_cba_pct": afl_cba_pct_2025,
+                "afl_2025_ppm": afl_ppm_2025,
+                "afl_salary": afl_salary,
+                "afl_owned_pct": afl_owned_pct,
+                "stats_2025_games_all": stats_games_2025_all,
+                "stats_2025_avg_all": stats_avg_2025_all,
+                "stats_2025_max_all": stats_max_2025_all,
+                "stats_2025_100_plus_all": stats_100_plus_2025_all,
+                "stats_2025_120_plus_all": stats_120_plus_2025_all,
+                "stats_2025_stddev_all": stats_stddev_2025_all,
+                "stats_2025_reg_games": stats_reg_games_2025,
+                "stats_2025_reg_avg": stats_reg_avg_2025,
+                "stats_2025_l5_avg": stats_l5_avg_2025,
+                "stats_2025_finals_games": stats_finals_games_2025,
+                "stats_2025_finals_avg": stats_finals_avg_2025,
                 "projection_spread": proj_spread,
                 "projection_source_count": len(proj_values),
                 "adp_value_gap": adp_value_gap,
@@ -1129,6 +1415,8 @@ def build_datasets(
                 "source_ultimate_xlsx": 1 if "ultimate" in rec["sources"] else 0,
                 "source_expert_xlsx": 1 if "experts" in rec["sources"] else 0,
                 "source_data_csv": 1 if "data" in rec["sources"] else 0,
+                "source_afl_fantasy_xlsx": 1 if "afl_fantasy" in rec["sources"] else 0,
+                "source_afl_stats_csv": 1 if "afl_stats" in rec["sources"] else 0,
                 "club_conflict": club_conflict,
                 "position_conflict": position_conflict,
                 "projection_conflict": projection_conflict,
@@ -1310,6 +1598,29 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "ultimate_games_2024",
         "ultimate_avg_2023",
         "ultimate_games_2023",
+        "afl_2025_games_all",
+        "afl_2025_fp_all",
+        "afl_2025_reg_avg",
+        "afl_2025_l5_avg",
+        "afl_2025_finals_avg",
+        "afl_2025_max",
+        "afl_2025_100_plus",
+        "afl_2025_120_plus",
+        "afl_2025_cba_pct",
+        "afl_2025_ppm",
+        "afl_salary",
+        "afl_owned_pct",
+        "stats_2025_games_all",
+        "stats_2025_avg_all",
+        "stats_2025_max_all",
+        "stats_2025_100_plus_all",
+        "stats_2025_120_plus_all",
+        "stats_2025_stddev_all",
+        "stats_2025_reg_games",
+        "stats_2025_reg_avg",
+        "stats_2025_l5_avg",
+        "stats_2025_finals_games",
+        "stats_2025_finals_avg",
         "projection_spread",
         "projection_source_count",
         "adp_value_gap",
@@ -1320,6 +1631,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "source_ultimate_xlsx",
         "source_expert_xlsx",
         "source_data_csv",
+        "source_afl_fantasy_xlsx",
+        "source_afl_stats_csv",
         "club_conflict",
         "position_conflict",
         "projection_conflict",
@@ -1423,6 +1736,29 @@ def write_xlsx(path: Path, rows: list[dict[str, Any]]) -> None:
         "ultimate_games_2024",
         "ultimate_avg_2023",
         "ultimate_games_2023",
+        "afl_2025_games_all",
+        "afl_2025_fp_all",
+        "afl_2025_reg_avg",
+        "afl_2025_l5_avg",
+        "afl_2025_finals_avg",
+        "afl_2025_max",
+        "afl_2025_100_plus",
+        "afl_2025_120_plus",
+        "afl_2025_cba_pct",
+        "afl_2025_ppm",
+        "afl_salary",
+        "afl_owned_pct",
+        "stats_2025_games_all",
+        "stats_2025_avg_all",
+        "stats_2025_max_all",
+        "stats_2025_100_plus_all",
+        "stats_2025_120_plus_all",
+        "stats_2025_stddev_all",
+        "stats_2025_reg_games",
+        "stats_2025_reg_avg",
+        "stats_2025_l5_avg",
+        "stats_2025_finals_games",
+        "stats_2025_finals_avg",
         "projection_spread",
         "projection_source_count",
         "adp_value_gap",
@@ -1433,6 +1769,8 @@ def write_xlsx(path: Path, rows: list[dict[str, Any]]) -> None:
         "source_ultimate_xlsx",
         "source_expert_xlsx",
         "source_data_csv",
+        "source_afl_fantasy_xlsx",
+        "source_afl_stats_csv",
         "club_conflict",
         "position_conflict",
         "projection_conflict",
@@ -1571,6 +1909,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-csv", type=Path, default=DEFAULT_DATA_CSV)
     parser.add_argument("--draft-doctors-pdf", type=Path, default=DEFAULT_DRAFT_DOCTORS_PDF)
     parser.add_argument("--official-draft-pdf", type=Path, default=DEFAULT_OFFICIAL_DRAFT_PDF)
+    parser.add_argument("--afl-fantasy-xlsx", type=Path, default=DEFAULT_AFL_FANTASY_XLSX)
+    parser.add_argument("--afl-stats-csv", type=Path, default=DEFAULT_AFL_STATS_CSV)
     parser.add_argument("--full-out", type=Path, default=DEFAULT_FULL_OUT)
     parser.add_argument("--app-out", type=Path, default=DEFAULT_APP_OUT)
     parser.add_argument("--xlsx-out", type=Path, default=DEFAULT_XLSX_OUT)
@@ -1591,6 +1931,18 @@ def main() -> None:
     ultimate_rows = load_ultimate_xlsx(args.ultimate_xlsx)
     expert_rows, expert_sheet_sizes = load_expert_xlsx(args.expert_xlsx)
     data_rows = load_data_csv(args.data_csv)
+    afl_fantasy_rows: list[dict[str, str]] = []
+    if args.afl_fantasy_xlsx.exists():
+        afl_fantasy_rows = load_afl_fantasy_xlsx(args.afl_fantasy_xlsx)
+    else:
+        print(f"Info: optional source not found (skipping): {args.afl_fantasy_xlsx}")
+
+    afl_stats_rows: list[dict[str, Any]] = []
+    if args.afl_stats_csv.exists():
+        afl_stats_rows = load_afl_stats_summary_csv(args.afl_stats_csv)
+    else:
+        print(f"Info: optional source not found (skipping): {args.afl_stats_csv}")
+
     pdf_sources = load_pdf_pages([args.draft_doctors_pdf, args.official_draft_pdf])
 
     full_rows, app_rows, mapping_stats = build_datasets(
@@ -1599,6 +1951,8 @@ def main() -> None:
         expert_rows=expert_rows,
         expert_sheet_sizes=expert_sheet_sizes,
         data_rows=data_rows,
+        afl_fantasy_rows=afl_fantasy_rows,
+        afl_stats_rows=afl_stats_rows,
         reference_date=reference_date,
         pdf_sources=pdf_sources,
     )
@@ -1612,6 +1966,8 @@ def main() -> None:
     print(f"Manual alias hits: {mapping_stats['manual_alias_hits']}")
     print(f"Fuzzy matches: {mapping_stats['fuzzy_matches']}")
     print(f"Rows with PDF notes: {mapping_stats['pdf_notes_added']}")
+    print(f"Rows from optional AFL workbook: {len(afl_fantasy_rows)}")
+    print(f"Rows from optional AFL stats summary: {len(afl_stats_rows)}")
     print(f"Wrote full dataset: {args.full_out}")
     print(f"Wrote app dataset: {args.app_out}")
     print(f"Wrote xlsx dataset: {args.xlsx_out}")

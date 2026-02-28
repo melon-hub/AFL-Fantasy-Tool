@@ -96,8 +96,15 @@ export function RecentPicks({
                   {pick.playerName}
                 </span>
                 <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                  Team {pick.teamNumber}
+                  {pick.teamName
+                    ? `${pick.teamName} (Team ${pick.teamNumber})`
+                    : `Team ${pick.teamNumber}`}
                 </span>
+                {pick.round != null && pick.pickInRound != null && (
+                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    R{pick.round}.{pick.pickInRound}
+                  </span>
+                )}
                 <button
                   onClick={() => onUndraftPlayer(pick.playerId)}
                   className="ml-auto text-xs text-zinc-400 transition-colors hover:text-red-600 dark:hover:text-red-400"
