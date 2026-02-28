@@ -15,6 +15,9 @@ import type {
   Position,
   PositionScarcity,
   DraftRecommendation,
+  DraftPick,
+  PositionRunAlert,
+  DraftPickCountdown,
 } from "@/types";
 import { POSITIONS, BYE_ROUNDS } from "./constants";
 
@@ -218,10 +221,11 @@ export function calculateVorp(
       smartRank,
       positionalScarcity,
       byeValue,
+      vona: null, // computed in second pass
     };
   });
 
-  // Second pass: rank by finalValue and compute valueOverAdp
+  // Second pass: rank by finalValue, compute valueOverAdp and VONA
   const ranked = [...withMetrics]
     .filter((p) => !p.isDrafted)
     .sort((a, b) => b.finalValue - a.finalValue);
@@ -229,11 +233,33 @@ export function calculateVorp(
   const rankMap = new Map<string, number>();
   ranked.forEach((p, i) => rankMap.set(p.id, i + 1));
 
+  // Build sorted-by-finalValue lists per position for VONA
+  const availableByPosition: Record<Position, PlayerWithMetrics[]> = {
+    DEF: [], MID: [], RUC: [], FWD: [],
+  };
+  for (const p of ranked) {
+    availableByPosition[p.bestVorpPosition].push(p);
+  }
+
+  // VONA map: for each player, gap to the next-best available at their position
+  const vonaMap = new Map<string, number>();
+  for (const pos of POSITIONS) {
+    const list = availableByPosition[pos];
+    for (let i = 0; i < list.length; i++) {
+      const nextBest = list[i + 1];
+      vonaMap.set(
+        list[i].id,
+        nextBest ? list[i].finalValue - nextBest.finalValue : list[i].finalValue
+      );
+    }
+  }
+
   return withMetrics.map((p) => {
     const rank = rankMap.get(p.id);
     return {
       ...p,
       valueOverAdp: p.adp != null && rank != null ? p.adp - rank : null,
+      vona: vonaMap.get(p.id) ?? null,
     };
   });
 }
@@ -296,6 +322,13 @@ export function generateRecommendations(
       reasons.push(`Smoky: ${p.smokyNote}`);
     }
 
+    // VONA reason — big gap means "don't skip this player"
+    if (p.vona != null && p.vona > 10) {
+      reasons.push(
+        `Big drop-off: ${p.vona.toFixed(1)} pts better than next ${p.bestVorpPosition} — don't skip`
+      );
+    }
+
     // ADP value reason
     if (p.valueOverAdp != null && p.valueOverAdp > 5) {
       reasons.push(
@@ -315,6 +348,193 @@ export function generateRecommendations(
       reasons,
     };
   });
+}
+
+// ──────────────────────────────────────────────
+// Position run detection
+// ──────────────────────────────────────────────
+
+/**
+ * Detect when a position is being heavily drafted in recent picks.
+ * A "run" = 3+ players at the same position within the last `windowSize` picks.
+ *
+ * This warns you when opponents are draining a position, so you can decide
+ * whether to jump in or pivot to a position that's being ignored.
+ */
+export function detectPositionRuns(
+  draftPicks: DraftPick[],
+  allPlayers: Player[],
+  windowSize: number = 5
+): PositionRunAlert[] {
+  if (draftPicks.length < 3) return [];
+
+  const recentPicks = draftPicks.slice(-windowSize);
+  const alerts: PositionRunAlert[] = [];
+
+  // Count positions drafted in the window
+  const posCounts: Record<Position, number> = { DEF: 0, MID: 0, RUC: 0, FWD: 0 };
+
+  for (const pick of recentPicks) {
+    const player = allPlayers.find((p) => p.id === pick.playerId);
+    if (!player) continue;
+    // Count against primary position (first listed)
+    posCounts[player.positions[0]] += 1;
+  }
+
+  for (const pos of POSITIONS) {
+    if (posCounts[pos] >= 3) {
+      alerts.push({
+        position: pos,
+        count: posCounts[pos],
+        windowSize: recentPicks.length,
+        message: `${pos} run: ${posCounts[pos]} of the last ${recentPicks.length} picks were ${pos} — consider acting now or pivoting`,
+      });
+    }
+  }
+
+  return alerts;
+}
+
+// ──────────────────────────────────────────────
+// Draft pick countdown + positional forecasting
+// ──────────────────────────────────────────────
+
+/**
+ * Calculate how many picks until your next turn in a snake draft,
+ * and estimate how many players at each position will be gone by then.
+ *
+ * Snake draft order for 6 teams:
+ *   Round 1: 1, 2, 3, 4, 5, 6
+ *   Round 2: 6, 5, 4, 3, 2, 1
+ *   Round 3: 1, 2, 3, 4, 5, 6
+ *   ...
+ *
+ * Given currentOverallPick, we figure out where you pick next.
+ */
+export function calculatePickCountdown(
+  currentOverallPick: number,
+  settings: LeagueSettings,
+  allPlayers: Player[],
+  draftPicks: DraftPick[]
+): DraftPickCountdown {
+  const numTeams = settings.numTeams;
+  const myTeam = settings.myTeamNumber; // 1-indexed
+
+  // Find the next overall pick number belonging to myTeam
+  const myNextOverallPick = findNextPickForTeam(
+    currentOverallPick,
+    myTeam,
+    numTeams
+  );
+  const picksUntilMyTurn = myNextOverallPick - currentOverallPick;
+
+  // Estimate positional attrition based on recent draft trends
+  const estimatedLossByPosition = estimatePositionalAttrition(
+    picksUntilMyTurn,
+    draftPicks,
+    allPlayers,
+    numTeams
+  );
+
+  // Current available counts
+  const available = allPlayers.filter((p) => !p.isDrafted);
+  const projectedAvailableByPosition = {} as Record<
+    Position,
+    { now: number; projected: number }
+  >;
+
+  for (const pos of POSITIONS) {
+    const now = available.filter((p) => p.positions.includes(pos)).length;
+    projectedAvailableByPosition[pos] = {
+      now,
+      projected: Math.max(0, now - estimatedLossByPosition[pos]),
+    };
+  }
+
+  return {
+    picksUntilMyTurn,
+    myNextOverallPick,
+    estimatedLossByPosition,
+    projectedAvailableByPosition,
+  };
+}
+
+/**
+ * In a snake draft with N teams, find the next overall pick for a given team.
+ *
+ * Pick mapping: in odd rounds team T picks at position T,
+ * in even rounds team T picks at position (N+1-T).
+ */
+function findNextPickForTeam(
+  currentOverallPick: number,
+  team: number,
+  numTeams: number
+): number {
+  // Check every pick from currentOverallPick onward
+  for (let pick = currentOverallPick; pick <= currentOverallPick + 2 * numTeams; pick++) {
+    const pickInRound = ((pick - 1) % numTeams) + 1; // 1-indexed within round
+    const round = Math.ceil(pick / numTeams);
+    const isOddRound = round % 2 === 1;
+
+    // In odd rounds: slot 1 = team 1, slot 2 = team 2, etc.
+    // In even rounds: slot 1 = team N, slot 2 = team N-1, etc.
+    const teamAtThisPick = isOddRound
+      ? pickInRound
+      : numTeams + 1 - pickInRound;
+
+    if (teamAtThisPick === team) return pick;
+  }
+
+  // Fallback (shouldn't happen)
+  return currentOverallPick + numTeams;
+}
+
+/**
+ * Estimate how many players at each position will be taken in the next N picks,
+ * based on the recent draft trend.
+ *
+ * Uses a blend of:
+ * 1. Recent positional draft rate (last 12 picks)
+ * 2. Uniform baseline (when not enough history)
+ */
+function estimatePositionalAttrition(
+  picksAhead: number,
+  draftPicks: DraftPick[],
+  allPlayers: Player[],
+  numTeams: number
+): Record<Position, number> {
+  const result: Record<Position, number> = { DEF: 0, MID: 0, RUC: 0, FWD: 0 };
+
+  if (picksAhead === 0) return result;
+
+  // Look at the last 2 rounds of picks for rate estimation
+  const windowSize = Math.min(draftPicks.length, numTeams * 2);
+
+  if (windowSize < 3) {
+    // Not enough history — assume uniform distribution
+    const perPos = picksAhead / POSITIONS.length;
+    for (const pos of POSITIONS) {
+      result[pos] = Math.round(perPos);
+    }
+    return result;
+  }
+
+  const recentPicks = draftPicks.slice(-windowSize);
+  const posCounts: Record<Position, number> = { DEF: 0, MID: 0, RUC: 0, FWD: 0 };
+
+  for (const pick of recentPicks) {
+    const player = allPlayers.find((p) => p.id === pick.playerId);
+    if (!player) continue;
+    posCounts[player.positions[0]] += 1;
+  }
+
+  // Convert counts to rates and project forward
+  for (const pos of POSITIONS) {
+    const rate = posCounts[pos] / windowSize;
+    result[pos] = Math.round(rate * picksAhead);
+  }
+
+  return result;
 }
 
 // ──────────────────────────────────────────────

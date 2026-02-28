@@ -52,6 +52,8 @@ export interface PlayerWithMetrics extends Player {
   smartRank: number;
   positionalScarcity: number; // 0–100: how depleted best position is
   byeValue: number; // Bye round desirability for your team
+  // VONA: gap between this player and the next-best available at their position
+  vona: number | null;
 }
 
 // ──────────────────────────────────────────────
@@ -128,6 +130,32 @@ export interface SmartRankWeights {
   vorpWeight: number; // default 0.7
   scarcityWeight: number; // default 0.2
   byeWeight: number; // default 0.1
+}
+
+// ──────────────────────────────────────────────
+// Position run detection
+// ──────────────────────────────────────────────
+
+/** Alert when multiple players at the same position are drafted in sequence */
+export interface PositionRunAlert {
+  position: Position;
+  count: number; // e.g. 3 DEFs in last 4 picks
+  windowSize: number; // how many recent picks we examined
+  message: string; // human-readable alert
+}
+
+// ──────────────────────────────────────────────
+// Draft pick countdown
+// ──────────────────────────────────────────────
+
+/** Shows picks until your next turn + estimated positional attrition */
+export interface DraftPickCountdown {
+  picksUntilMyTurn: number;
+  myNextOverallPick: number;
+  /** Estimated players at each position that will be taken before your next pick */
+  estimatedLossByPosition: Record<Position, number>;
+  /** Current available count vs projected available at your next pick */
+  projectedAvailableByPosition: Record<Position, { now: number; projected: number }>;
 }
 
 // ──────────────────────────────────────────────
