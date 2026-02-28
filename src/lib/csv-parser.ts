@@ -90,6 +90,15 @@ export function parseCsv(input: string): {
   const colSmoky = findColumn(headers, CSV_COLUMN_MAPPING.smokyNote);
   const colAdp = findColumn(headers, CSV_COLUMN_MAPPING.adp);
   const colNotes = findColumn(headers, CSV_COLUMN_MAPPING.notes);
+  const colInjury = findColumn(headers, CSV_COLUMN_MAPPING.injury);
+  const colRisk = findColumn(headers, CSV_COLUMN_MAPPING.risk);
+  const colExpertRank = findColumn(headers, CSV_COLUMN_MAPPING.expertRank);
+  const colCbaPct = findColumn(headers, CSV_COLUMN_MAPPING.cbaPct);
+  const colTogPct = findColumn(headers, CSV_COLUMN_MAPPING.togPct);
+  const colAdpValueGap = findColumn(headers, CSV_COLUMN_MAPPING.adpValueGap);
+  const colVariance = findColumn(headers, CSV_COLUMN_MAPPING.variance);
+  const colAvgScore2025 = findColumn(headers, CSV_COLUMN_MAPPING.avgScore2025);
+  const colMaxScore2025 = findColumn(headers, CSV_COLUMN_MAPPING.maxScore2025);
 
   // Validate required columns
   if (!colName) errors.push('Required column missing: "name"');
@@ -132,6 +141,13 @@ export function parseCsv(input: string): {
     const age = colAge ? parseInt(row[colAge], 10) : NaN;
     const games = colGames ? parseInt(row[colGames], 10) : NaN;
     const adp = colAdp ? parseFloat(row[colAdp]) : NaN;
+    const expertRank = colExpertRank ? parseFloat(row[colExpertRank]) : NaN;
+    const cbaPct = colCbaPct ? parseFloat(row[colCbaPct]) : NaN;
+    const togPct = colTogPct ? parseFloat(row[colTogPct]) : NaN;
+    const adpValueGap = colAdpValueGap ? parseFloat(row[colAdpValueGap]) : NaN;
+    const variance = colVariance ? parseFloat(row[colVariance]) : NaN;
+    const avgScore2025 = colAvgScore2025 ? parseFloat(row[colAvgScore2025]) : NaN;
+    const maxScore2025 = colMaxScore2025 ? parseFloat(row[colMaxScore2025]) : NaN;
 
     players.push({
       id,
@@ -148,6 +164,15 @@ export function parseCsv(input: string): {
       smokyNote: colSmoky ? row[colSmoky]?.trim() || "" : "",
       notes: colNotes ? row[colNotes]?.trim() || "" : "",
       adp: isNaN(adp) ? null : adp,
+      injury: colInjury ? row[colInjury]?.trim() || "" : "",
+      risk: colRisk ? row[colRisk]?.trim() || "" : "",
+      expertRank: isNaN(expertRank) ? null : expertRank,
+      cbaPct: isNaN(cbaPct) ? null : cbaPct,
+      togPct: isNaN(togPct) ? null : togPct,
+      adpValueGap: isNaN(adpValueGap) ? null : adpValueGap,
+      variance: isNaN(variance) ? null : variance,
+      avgScore2025: isNaN(avgScore2025) ? null : avgScore2025,
+      maxScore2025: isNaN(maxScore2025) ? null : maxScore2025,
       isDrafted: false,
       draftedBy: null,
       draftOrder: null,

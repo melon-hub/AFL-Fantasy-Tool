@@ -28,7 +28,7 @@ export function CsvUpload() {
 
   const handleLoadSample = useCallback(async () => {
     setErrors([]);
-    const res = await fetch("/sample-data/players-2026-sample.csv");
+    const res = await fetch("/sample-data/players-2026-mega.csv");
     const text = await res.text();
     const result = parseCsv(text);
     if (result.errors.length > 0) setErrors(result.errors);
@@ -80,7 +80,7 @@ export function CsvUpload() {
         className="flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
       >
         <FileText className="h-4 w-4" />
-        Load Sample Data (30 players)
+        Load Mega Data (Full)
       </button>
 
       {errors.length > 0 && (

@@ -1,6 +1,13 @@
 // src/lib/constants.ts
 
-import type { LeagueSettings, SmartRankWeights, Position, CsvColumnMapping } from "@/types";
+import type {
+  LeagueSettings,
+  SmartRankWeights,
+  Position,
+  CsvColumnMapping,
+  PhaseBoundaries,
+  PhaseWeights,
+} from "@/types";
 
 // ──────────────────────────────────────────────
 // Positions
@@ -28,8 +35,34 @@ export const POSITION_COLORS: Record<Position, string> = {
 
 export const DEFAULT_SMART_RANK_WEIGHTS: SmartRankWeights = {
   vorpWeight: 0.7,
-  scarcityWeight: 0.2,
+  scarcityWeight: 0.15,
   byeWeight: 0.1,
+};
+
+export const DEFAULT_PHASE_BOUNDARIES: PhaseBoundaries = {
+  earlyToMid: 0.33,
+  midToLate: 0.7,
+};
+
+export const DEFAULT_PHASE_WEIGHTS: PhaseWeights = {
+  early: {
+    vona: 0.35,
+    value: 0.15,
+    consistency: 0.25,
+    riskPenalty: 0.3,
+  },
+  mid: {
+    vona: 0.3,
+    value: 0.25,
+    consistency: 0.2,
+    riskPenalty: 0.25,
+  },
+  late: {
+    vona: 0.2,
+    value: 0.35,
+    consistency: 0.15,
+    riskPenalty: 0.2,
+  },
 };
 
 export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
@@ -40,6 +73,9 @@ export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
   dppBonusValue: 3.0,
   myTeamNumber: 1,
   smartRankWeights: DEFAULT_SMART_RANK_WEIGHTS,
+  phaseBoundaries: DEFAULT_PHASE_BOUNDARIES,
+  phaseWeights: DEFAULT_PHASE_WEIGHTS,
+  usePickNowScore: true,
 };
 
 // Total roster per team = 18 starters + 4 emergencies + 6 bench = 28
@@ -62,6 +98,21 @@ export const CSV_COLUMN_MAPPING: CsvColumnMapping = {
   smokyNote: ["smoky_note", "smoky", "smoky_reason"],
   adp: ["adp", "average_draft_position"],
   notes: ["notes", "note", "comment"],
+  injury: ["rankings_injury", "injury", "injury_flag"],
+  risk: ["data_risk", "risk", "risk_level"],
+  expertRank: ["expert_consensus_rank", "expert_rank", "ecr"],
+  cbaPct: ["rankings_cba_pct", "cba_pct", "cba", "ultimate_cba_pct"],
+  togPct: ["ultimate_tog_pct", "tog_pct", "tog"],
+  adpValueGap: ["adp_value_gap", "value_gap"],
+  variance: ["rankings_variance", "variance", "projection_spread"],
+  avgScore2025: [
+    "avg_2025_blend",
+    "rankings_avg_2025",
+    "ultimate_avg_2025",
+    "avg_2025",
+    "avg25",
+  ],
+  maxScore2025: ["ultimate_max_2025", "max_2025", "max_score"],
 };
 
 // ──────────────────────────────────────────────

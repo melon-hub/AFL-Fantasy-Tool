@@ -60,8 +60,11 @@ export default function Home() {
 
   // Recalculate VORP on every render (players/settings change)
   const playersWithMetrics = useMemo(
-    () => (players.length > 0 ? calculateVorp(players, settings) : []),
-    [players, settings]
+    () =>
+      players.length > 0
+        ? calculateVorp(players, settings, currentOverallPick)
+        : [],
+    [players, settings, currentOverallPick]
   );
 
   const draftedCount = players.filter((p) => p.isDrafted).length;
@@ -169,6 +172,7 @@ export default function Home() {
             {activeTab === "board" && (
               <DraftBoard
                 players={playersWithMetrics}
+                settings={settings}
                 onDraftClick={handleDraftClick}
               />
             )}

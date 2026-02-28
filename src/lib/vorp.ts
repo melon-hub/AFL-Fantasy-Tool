@@ -13,6 +13,7 @@ import type {
   PlayerWithMetrics,
   LeagueSettings,
   Position,
+  DraftPhase,
   PositionScarcity,
   DraftRecommendation,
   DraftPick,
@@ -20,6 +21,88 @@ import type {
   DraftPickCountdown,
 } from "@/types";
 import { POSITIONS, BYE_ROUNDS } from "./constants";
+
+interface DraftPhaseState {
+  phase: DraftPhase;
+  hybridProgress: number;
+  pickProgress: number;
+  myRosterProgress: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normaliseMinMax(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number = 50
+): number {
+  if (max - min <= 0.0001) return fallback;
+  return ((value - min) / (max - min)) * 100;
+}
+
+function parseRiskBase(risk: string): number {
+  const r = risk.trim().toLowerCase();
+  if (r === "low") return 20;
+  if (r === "medium") return 55;
+  if (r === "high") return 85;
+  return 45;
+}
+
+function textIndicatesSeasonOut(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("out for season") ||
+    lower.includes("season-ending") ||
+    lower.includes("season ending") ||
+    lower.includes("season over") ||
+    lower.includes("injury: season") ||
+    lower.includes("miss the season")
+  );
+}
+
+function isSeasonLongUnavailable(player: Player): boolean {
+  return (
+    textIndicatesSeasonOut(player.injury) ||
+    textIndicatesSeasonOut(player.notes)
+  );
+}
+
+function calculateRiskScore(player: Player): number {
+  if (isSeasonLongUnavailable(player)) return 100;
+  const injuryPenalty = player.injury.trim() ? 10 : 0;
+  return clamp(parseRiskBase(player.risk) + injuryPenalty, 0, 100);
+}
+
+function calculateConsistencyScore(player: Player): number {
+  if (player.games2025 == null) return 60;
+  return clamp((player.games2025 / 23) * 100, 25, 100);
+}
+
+export function calculateDraftPhase(
+  currentOverallPick: number,
+  settings: LeagueSettings,
+  myDraftedPlayersCount: number
+): DraftPhaseState {
+  const totalTeamSlots =
+    Object.values(settings.starters).reduce((sum, n) => sum + n, 0) +
+    Object.values(settings.emergencies).reduce((sum, n) => sum + n, 0) +
+    settings.benchSize;
+  const totalDraftPicks = Math.max(1, totalTeamSlots * settings.numTeams);
+
+  const pickProgress = clamp((currentOverallPick - 1) / totalDraftPicks, 0, 1);
+  const myRosterProgress = clamp(myDraftedPlayersCount / Math.max(1, totalTeamSlots), 0, 1);
+  const hybridProgress = 0.6 * pickProgress + 0.4 * myRosterProgress;
+
+  const { earlyToMid, midToLate } = settings.phaseBoundaries;
+  let phase: DraftPhase = "early";
+  if (hybridProgress >= midToLate) phase = "late";
+  else if (hybridProgress >= earlyToMid) phase = "mid";
+
+  return { phase, hybridProgress, pickProgress, myRosterProgress };
+}
 
 // ──────────────────────────────────────────────
 // Replacement levels
@@ -159,7 +242,8 @@ export function calculateByeValue(
  */
 export function calculateVorp(
   players: Player[],
-  settings: LeagueSettings
+  settings: LeagueSettings,
+  currentOverallPick?: number
 ): PlayerWithMetrics[] {
   const available = players.filter((p) => !p.isDrafted);
   const replacementLevels = calculateReplacementLevels(available, settings);
@@ -169,6 +253,12 @@ export function calculateVorp(
   const myTeamPlayers = players.filter(
     (p) => p.isDrafted && p.draftedBy === settings.myTeamNumber
   );
+  const draftPhase = calculateDraftPhase(
+    currentOverallPick ?? players.filter((p) => p.isDrafted).length + 1,
+    settings,
+    myTeamPlayers.length
+  );
+  const phaseWeights = settings.phaseWeights[draftPhase.phase];
 
   const { vorpWeight, scarcityWeight, byeWeight } = settings.smartRankWeights;
 
@@ -222,6 +312,10 @@ export function calculateVorp(
       positionalScarcity,
       byeValue,
       vona: null, // computed in second pass
+      pickNowScore: 0,
+      consistencyScore: calculateConsistencyScore(player),
+      riskScore: calculateRiskScore(player),
+      draftPhaseAtCalc: draftPhase.phase,
     };
   });
 
@@ -254,12 +348,44 @@ export function calculateVorp(
     }
   }
 
-  return withMetrics.map((p) => {
+  const withSecondary = withMetrics.map((p) => {
     const rank = rankMap.get(p.id);
     return {
       ...p,
       valueOverAdp: p.adp != null && rank != null ? p.adp - rank : null,
       vona: vonaMap.get(p.id) ?? null,
+    };
+  });
+
+  const availableSecondary = withSecondary.filter((p) => !p.isDrafted);
+  const smartValues = availableSecondary.map((p) => p.smartRank);
+  const vonaValues = availableSecondary.map((p) => p.vona ?? 0);
+  const valueValues = availableSecondary.map((p) => Math.max(p.adpValueGap ?? 0, 0));
+
+  const smartMin = smartValues.length > 0 ? Math.min(...smartValues) : 0;
+  const smartMax = smartValues.length > 0 ? Math.max(...smartValues) : 100;
+  const vonaMin = vonaValues.length > 0 ? Math.min(...vonaValues) : 0;
+  const vonaMax = vonaValues.length > 0 ? Math.max(...vonaValues) : 100;
+  const valueMin = valueValues.length > 0 ? Math.min(...valueValues) : 0;
+  const valueMax = valueValues.length > 0 ? Math.max(...valueValues) : 100;
+
+  return withSecondary.map((p) => {
+    const smartNorm = normaliseMinMax(p.smartRank, smartMin, smartMax, 50);
+    const vonaNorm = normaliseMinMax(p.vona ?? 0, vonaMin, vonaMax, 0);
+    const valueNorm = normaliseMinMax(Math.max(p.adpValueGap ?? 0, 0), valueMin, valueMax, 0);
+
+    const pickNowScore = settings.usePickNowScore
+      ? smartNorm +
+        phaseWeights.vona * vonaNorm +
+        phaseWeights.value * valueNorm +
+        phaseWeights.consistency * p.consistencyScore -
+        phaseWeights.riskPenalty * p.riskScore
+      : smartNorm;
+
+    return {
+      ...p,
+      pickNowScore,
+      draftPhaseAtCalc: draftPhase.phase,
     };
   });
 }
@@ -278,12 +404,21 @@ export function generateRecommendations(
   count: number = 5
 ): DraftRecommendation[] {
   const available = players.filter((p) => !p.isDrafted);
+  const availableForRecommendations = available.filter(
+    (p) => !isSeasonLongUnavailable(p)
+  );
   const scarcity = calculatePositionalScarcity(players, settings);
-  const topBySmartRank = [...available].sort(
-    (a, b) => b.smartRank - a.smartRank
+  const phase = available[0]?.draftPhaseAtCalc ?? "early";
+  const phaseWeights = settings.phaseWeights[phase];
+
+  const rankedPool = [...(availableForRecommendations.length > 0 ? availableForRecommendations : available)].sort(
+    (a, b) =>
+      settings.usePickNowScore
+        ? b.pickNowScore - a.pickNowScore
+        : b.smartRank - a.smartRank
   );
 
-  return topBySmartRank.slice(0, count).map((p) => {
+  return rankedPool.slice(0, count).map((p) => {
     const reasons: string[] = [];
     const posScarcity = scarcity[p.bestVorpPosition];
 
@@ -329,11 +464,27 @@ export function generateRecommendations(
       );
     }
 
+    if (phaseWeights.vona > 0 && p.vona != null && p.vona >= 6) {
+      reasons.push(`High VONA pressure (${p.vona.toFixed(1)}) in ${phase.toUpperCase()} phase`);
+    }
+
     // ADP value reason
     if (p.valueOverAdp != null && p.valueOverAdp > 5) {
       reasons.push(
         `Sliding in draft: ADP ${p.adp} but ranked ${p.adp! - p.valueOverAdp} by value`
       );
+    }
+
+    if (phaseWeights.consistency > 0 && p.games2025 != null && p.consistencyScore >= 85) {
+      reasons.push(`High consistency (${p.games2025} games in 2025)`);
+    }
+
+    if (phaseWeights.riskPenalty > 0 && p.riskScore >= 70) {
+      reasons.push(`Risk penalty active (${p.risk}${p.injury ? `, ${p.injury}` : ""})`);
+    }
+
+    if (p.notes.trim()) {
+      reasons.push(`Notes: ${p.notes.trim().slice(0, 100)}${p.notes.trim().length > 100 ? "..." : ""}`);
     }
 
     if (reasons.length === 0) {
@@ -345,6 +496,8 @@ export function generateRecommendations(
       playerName: p.name,
       position: p.positionString,
       smartRank: p.smartRank,
+      pickNowScore: p.pickNowScore,
+      draftPhase: phase,
       reasons,
     };
   });

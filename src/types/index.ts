@@ -6,6 +6,7 @@
 // ──────────────────────────────────────────────
 
 export type Position = "DEF" | "MID" | "RUC" | "FWD";
+export type DraftPhase = "early" | "mid" | "late";
 
 export type PlayerCategory =
   | "premium"
@@ -35,6 +36,16 @@ export interface Player {
   smokyNote: string;
   notes: string;
   adp: number | null;
+  // ── Extended fields (from mega CSV) ──
+  injury: string; // Injury flag (e.g. "Managed", "ACL")
+  risk: string; // Risk level (e.g. "Low", "Medium", "High")
+  expertRank: number | null; // Expert consensus rank
+  cbaPct: number | null; // Centre bounce attendance %
+  togPct: number | null; // Time on ground %
+  adpValueGap: number | null; // ADP vs value rank gap (positive = steal)
+  variance: number | null; // Projection variance (ceiling/floor spread)
+  avgScore2025: number | null; // Last-season average (2025)
+  maxScore2025: number | null; // Best single-game score in 2025
   isDrafted: boolean;
   draftedBy: number | null; // Team number (1–6), null = undrafted
   draftOrder: number | null; // Overall pick number
@@ -54,7 +65,25 @@ export interface PlayerWithMetrics extends Player {
   byeValue: number; // Bye round desirability for your team
   // VONA: gap between this player and the next-best available at their position
   vona: number | null;
+  pickNowScore: number;
+  consistencyScore: number; // 0-100 reliability from games played
+  riskScore: number; // 0-100 availability/risk penalty input
+  draftPhaseAtCalc: DraftPhase;
 }
+
+export interface PhaseBoundaries {
+  earlyToMid: number; // default 0.33
+  midToLate: number; // default 0.70
+}
+
+export interface PhaseWeightVector {
+  vona: number;
+  value: number;
+  consistency: number;
+  riskPenalty: number;
+}
+
+export type PhaseWeights = Record<DraftPhase, PhaseWeightVector>;
 
 // ──────────────────────────────────────────────
 // League settings
@@ -70,6 +99,9 @@ export interface LeagueSettings {
   dppBonusValue: number; // Static DPP bonus (default: 3.0)
   myTeamNumber: number; // "I am Team X" (1–6)
   smartRankWeights: SmartRankWeights; // Configurable composite weights
+  phaseBoundaries: PhaseBoundaries; // Hybrid progress boundaries
+  phaseWeights: PhaseWeights; // Per-phase Pick-Now weights
+  usePickNowScore: boolean; // Toggle dynamic Pick-Now scoring
 }
 
 // ──────────────────────────────────────────────
@@ -122,6 +154,8 @@ export interface DraftRecommendation {
   playerName: string;
   position: string;
   smartRank: number;
+  pickNowScore: number;
+  draftPhase: DraftPhase;
   reasons: string[]; // Human-readable reasons, e.g. "DEF premiums 80% gone"
 }
 
@@ -177,4 +211,13 @@ export interface CsvColumnMapping {
   smokyNote: string[];
   adp: string[];
   notes: string[];
+  injury: string[];
+  risk: string[];
+  expertRank: string[];
+  cbaPct: string[];
+  togPct: string[];
+  adpValueGap: string[];
+  variance: string[];
+  avgScore2025: string[];
+  maxScore2025: string[];
 }

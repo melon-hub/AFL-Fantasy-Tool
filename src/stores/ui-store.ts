@@ -3,7 +3,7 @@ import { create } from "zustand";
 import type { Position } from "@/types";
 
 export type Tab = "board" | "team" | "bye" | "picks" | "smokies";
-export type SortMode = "vorp" | "smartRank";
+export type SortMode = "pickNow" | "vorp" | "smartRank";
 export type PositionFilter = "ALL" | Position | "DPP";
 
 interface UiStore {
@@ -28,7 +28,7 @@ export const useUiStore = create<UiStore>()((set) => ({
   activeTab: "board",
   positionFilter: "ALL",
   searchQuery: "",
-  sortMode: "vorp",
+  sortMode: "pickNow",
   showDrafted: false,
   sidebarOpen: false,
   draftModalPlayerId: null,
