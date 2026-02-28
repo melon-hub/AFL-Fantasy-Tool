@@ -28,6 +28,208 @@ This tool gives you:
 
 ---
 
+## How This Relates to the Broader AFL Draft Tool Landscape
+
+Tools like **Smart Draft Board** (smartdraftboard.com) have popularised VORP-based drafting for AFL SuperCoach and Fantasy. That tool covers 780+ players, works across both SuperCoach and AFL Fantasy, and defaults to 8-team leagues. It's a great reference for the core concepts — if you've used it, this section explains where our approaches align and where they diverge.
+
+### What We Share With Smart Draft Board
+
+Both tools are built on the same foundational insight: **raw projected score is a terrible way to rank draft picks.** A midfielder averaging 110 looks better than a ruck averaging 95, but if the next-available mid averages 105 while the next-available ruck averages 75, the ruck is the smarter pick by a mile. Both tools use VORP to quantify this.
+
+Both tools also layer additional context on top of raw VORP:
+- **Positional urgency/scarcity** — how desperate are you at each position?
+- **Bye round management** — how does this pick affect your bye week balance?
+- **Tier breaks** — visual indicators of where value drops off sharply
+- **Live draft intelligence** — real-time alerts that adapt as players are drafted
+- **DPP handling** — dual-position players get evaluated at both positions
+
+### Where We Differ
+
+| Area | Smart Draft Board | This Tool |
+|---|---|---|
+| **Default league size** | 8 teams | 6 teams — most private leagues are smaller |
+| **Replacement level** | Uses average score around the cut-off point, includes a proportion of bench slots | Uses the exact Nth player at the cut-off, based on starters + emergencies only (bench is position-agnostic, so excluded) |
+| **Smart Rank formula** | `VORP + (Urgency × Weight) + (Bye Score × 0.8)` — additive | `VORP × 0.7 + Scarcity × 0.2 + Bye × 0.1` — weighted composite with tuneable sliders |
+| **Urgency vs Scarcity** | "Urgency" combines unfilled roster slots AND positional scarcity into one signal | Scarcity is a standalone metric (pool depletion %); roster completion is handled separately in My Team |
+| **Bye scoring** | Density penalty + quadratic team exposure penalty + quality weighting (losing a premium hurts more) | Inverse crowdedness: fewer of your team on this bye = higher score. Simpler but effective |
+| **Tier break threshold** | 3+ point VORP gap, adjustable sensitivity | 8+ point value gap (stricter — only shows major cliffs) |
+| **Intelligence panels** | 4 separate panels: Best Value, Highest VORP, Tier Drops, Position Scarcity | Single unified panel: Top 5 recommendations with multi-reason explanations, plus scarcity bars, pick countdown, and position run detection |
+| **Projections** | Built-in 2025 averages as baseline, with in-app editing and CSV import | Fully BYO — you supply your own projections via CSV. No built-in data. |
+| **Smokies** | No dedicated system | First-class smoky tagging with dynamic scarcity-triggered alerts |
+| **VONA** | Not surfaced directly | Explicit column + "big drop-off" warnings |
+| **Position run detection** | Not featured | Detects when 3+ picks at the same position occur in a window |
+| **Pick countdown** | Not featured | Snake draft pick forecasting with positional attrition estimates |
+| **Hosting** | Cloud app with accounts | Fully local, offline-capable PWA — your data never leaves your browser |
+
+### Key Insight From Smart Draft Board: "Garbage In, Garbage Out"
+
+Smart Draft Board makes an important point that we've baked into our philosophy: **the tool is a calculator, not a crystal ball.** Their default 2025 averages are convenient but won't win you a 2026 draft — if you think a player is moving into the midfield, you MUST update their projection to see their true value.
+
+We take this further by not including any built-in projections at all. Your CSV is the single source of truth. This forces you to do the research, form opinions, and make those calls before draft night. The tool then does the maths on top of your thinking.
+
+As Smart Draft Board puts it: *"The most successful drafters are those who spend 10 minutes entering their own hot takes before the draft starts."* We agree — except we'd say spend 10 hours over the pre-season, tag your smokies, and the tool will reward you when it matters.
+
+### Smart Draft Board's Bye Score — What They Do Differently
+
+Their bye scoring is more granular than ours in three ways:
+
+1. **Density penalty** — if many players across the league share a bye, that round is "crowded" and those players get penalised. We don't factor in league-wide bye density, only your own team's distribution.
+
+2. **Quadratic team exposure** — if you already have 3 players on R14 and draft a 4th, the penalty increases quadratically (not linearly). This aggressively discourages stacking. Our model is linear — each additional player on a crowded bye reduces the score proportionally.
+
+3. **Quality weighting** — losing a premium for a bye week hurts more than losing a bench player. Their bye penalty is scaled by the player's score. Our bye value treats all players equally — the bye round is either crowded or it isn't, regardless of who's on it.
+
+Whether the extra granularity matters depends on your league. In a 6-team league, bye management is less critical than in 8+ teams because you have more total players to cover bye weeks. Our simpler model keeps bye as a tiebreaker (10% weight) rather than a dominant factor.
+
+### Smart Draft Board's Urgency vs Our Scarcity
+
+Smart Draft Board combines two things into "urgency": how many roster slots you still need at a position AND how scarce viable players are at that position. When you need 1 more RUC and only 3 decent rucks remain, urgency spikes.
+
+We split these into separate signals:
+- **Positional scarcity** (in the intelligence panel) tells you how depleted the league-wide pool is
+- **My Team panel** tells you how many roster slots you still need
+
+The advantage of splitting them: scarcity alerts fire regardless of your own roster state. Even if you're full on DEFs, you might want to know that the DEF pool is almost empty — because it affects DPP strategy and trade value.
+
+### Smart Draft Board's Full UI — What It Actually Looks Like
+
+Their league settings panel is richer than ours in several ways:
+
+**Draft Format options:**
+- **Snake** (default) — pick order reverses each round (1→8, 8→1, 1→8...)
+- **Linear** — same order every round
+- **Banzai** — reverse-order snake (worst team picks first)
+- **Custom** — define your own pick order
+
+We only support snake draft. For 6-team private leagues, snake is near-universal, so this hasn't been a gap — but it's worth knowing if we expand.
+
+**League Type options:**
+- **Redraft** (default) — standard, all players available each season
+- **Keeper** — retain some players year-to-year
+- **Dynasty** — full roster carries over
+
+We're purely a redraft tool. Keeper and dynasty modes would fundamentally change VORP calculations (kept players aren't in the available pool).
+
+**Roster configuration:**
+Their default for a 6-team league: DEF 6, MID 8, RUC 2, FWD 6, Flex 0, Bench 5 (total 27 players: 22 on-field + 5 bench). Our default: DEF 6, MID 5, FWD 6, RUC 1, plus 1 emergency per position + 6 flex bench (total 28 per team). The key difference is they use 8 MID starters and 2 RUC starters — this means their MID replacement level is higher (more starters to fill) and their RUC cliff is slightly less extreme (16 rucks rostered across 8 teams vs our 12 across 6). Both are configurable.
+
+**Their column set on the main board:**
+`#`, `PLAYER`, `SMART` (Smart Rank), `VORP`, `PROJ` (projected), `COMM` (community consensus average), `2026` (2026 projection), `2025` (2025 actual average), `VAR` (year-on-year variance), `L5` (last 5 games average), `MAX` (season-high score), `CBA%` (centre bounce attendance %), `BYE`, `BYE±` (bye impact score), `ADP`, `EXP` (experience/games), `FORM`, `TOG` (time on ground), `HI/LO` (consistency — high/low ratio)
+
+That's 18+ columns compared to our 11. They show way more historical data. The advantage is context; the disadvantage is information overload. They mitigate this with a "Columns" button to toggle visibility and a "Focus" mode that presumably strips back to essentials.
+
+**Player badge and tag system:**
+Each player row is decorated with contextual badges:
+- **Position badges:** Colour-coded (DEF blue, MID green, FWD red, RUC purple) — same as ours
+- **DPP indicators:** `M/F` (MID/FWD), `G.Def` (general defender) — shorthand for dual position
+- **Status tags:** `POS+` (positive role change), `SAFE` (low-risk pick), `RISKY` (injury/role concerns), `INJURED`, `UPSIDE` (breakout candidate), `SLP` (sleeper)
+- **Draft position tags:** `#1 PICK`, `#2 PICK`, `#10 PICK` etc — where they're expected to go
+- **Value tags:** `STEAL` (going later than they should), `VALUE` (good value at current ADP), `REACH` (going earlier than value suggests)
+- **Trend tags:** `HOT` (form trending up), `COLD` (form trending down)
+
+Our equivalent is simpler: category badges (premium/value/smoky/rookie/depth) and position badges. Their tag system gives more at-a-glance draft-night context — you can see "STEAL" and "UPSIDE" without reading numbers. This is a UX pattern worth learning from.
+
+**Filter bar:**
+Position counts in the filter bar (`DEF 258`, `MID 250`, `RUC 60`, `FWD 306`) — showing total player pool size per position. Plus team filter, bye filter, VORP range slider (min/max), and tag-based filters (Big Drop, Breakout, Rising). Our filter bar is simpler: position toggle, search, sort mode, show/hide drafted.
+
+**Quick Tour (5-step onboarding):**
+When you first open the board, a guided tooltip tour explains each concept:
+1. **Smart Rank** — "combines VORP, positional scarcity, and bye impact into one number. Higher = better value pick"
+2. **VORP Column** — "Value Over Replacement Player shows how much better a player is than the baseline at their position"
+3. **Draft Intelligence** — "This panel suggests the best value picks and warns about tier drops in real-time"
+4. **Edit Projections** — "Click 'Edit Now' to enter your own projected averages. Better projections = better rankings"
+5. (Fifth step not visible in tour)
+
+This onboarding pattern is something we lack entirely. A first-time user opening our tool sees VORP, VONA, Smart Rank, and finalValue with no explanation. The Quick Tour is a low-effort, high-impact UX feature.
+
+**Navigation:**
+Left sidebar with: Rankings, Draft Tracker, My Team, Bye Planner, Tiers, Expert Picks. Plus a Tools section: Projections, Import ADP, Save League, Help. Their "Tiers" is a dedicated tab with collapsible tier groups and per-position filtering — we show tier breaks inline on the draft board but don't have a standalone tiers view. "Expert Picks" is a feature we don't have (curated picks from known analysts).
+
+### What Smart Draft Board Has That We Don't (Yet)
+
+- **Built-in projections** — 780+ players with 2025 averages as a starting point. Useful for people who don't have their own spreadsheet.
+- **In-app projection editing** — "Edit Mode" to tweak scores without re-uploading CSV. Their banner says "PROJECTIONS DRIVE VALUE — VORP and Smart Rank are only as good as the numbers behind them. Enter your own expected averages to find the real gems."
+- **Account system** — save your draft research across sessions/devices via cloud sync.
+- **SuperCoach support** — different scoring system, same VORP framework. Toggle between SuperCoach and AFL Fantasy at the top.
+- **Adjustable tier sensitivity** — slider to control how aggressive tier breaks are.
+- **Rich player tags** — STEAL/VALUE/REACH/UPSIDE/RISKY/SAFE/HOT/COLD badges that give at-a-glance context beyond raw numbers.
+- **CBA% and advanced stats** — centre bounce attendance, time on ground, form rating, consistency metrics. These help evaluate role changes.
+- **ADP integration** — "Import ADP" as a dedicated tool, plus STEAL/REACH badges computed from ADP vs VORP rank.
+- **Quick Tour onboarding** — 5-step tooltip walkthrough for first-time users.
+- **Draft format variety** — Snake, Linear, Banzai, Custom.
+- **League types** — Redraft, Keeper, Dynasty.
+- **Expert Picks tab** — curated picks from analysts.
+- **Focus mode** — simplified view toggle (similar to the Simple Mode concept below).
+
+### What We Have That They Don't
+
+- **VONA (Value Over Next Available)** — the "don't skip this player" metric, surfaced as a column and in recommendations.
+- **Position run detection** — live alerts when a position is being raided in the current draft stretch.
+- **Pick countdown with positional forecasting** — "6 picks until yours, estimated 2 DEFs will go."
+- **Smokies system** — pre-tagged undervalued players with scarcity-triggered alerts.
+- **Fully offline** — no account, no cloud, no internet needed after first load.
+- **Full draft tracking** — log every pick for every team, not just yours, with undo for any pick.
+- **Configurable everything** — all weights, roster sizes, team counts, and DPP bonus exposed in the UI.
+
+---
+
+## UX Accessibility — The "Simple Mode" Problem
+
+### The Gap
+
+Our tool is more analytically powerful than Smart Draft Board in several ways (VONA, position runs, pick countdown, smokies). But power means nothing if your league mates open the app and feel intimidated.
+
+Smart Draft Board succeeds because it **feels approachable**. Their Quick Tour explains jargon on first load. Their "Focus" mode strips complexity. Their tag system (STEAL, VALUE, SAFE) communicates in plain English. Their VORP column has gold heat shading that makes value scannable without understanding the number.
+
+Our column headers — VORP, VONA, finalValue, smartRank, positionalScarcity — speak to people who already understand fantasy analytics. For the league mate who just wants to know "who should I pick next?", this is a wall of jargon.
+
+### The Fix: Simple Mode + Friendly Labels
+
+The solution is **not** to remove the advanced analytics. It's to hide them behind a friendlier default, with a toggle for power users. Specifically:
+
+**Simple Mode (default ON for first-time users):**
+
+Show only these columns: `Name` | `Pos` | `Club` | `Proj Score` | `Smart Pick Score` | `Bye` | `Alerts`
+
+Hide: VORP, VONA, dppBonus, vorpByPosition, category, ADP. The intelligence panel still shows plain-English alerts.
+
+**Advanced Mode (toggle ON):**
+
+Full column set as currently built. All the analytics, all the numbers.
+
+**Friendly column labels (both modes):**
+
+| Current Name | Friendly Name | Tooltip |
+|---|---|---|
+| VORP | Value Score | "How much better this player is than a replacement-level player in your league" |
+| Smart Rank | Smart Pick Score | "Best overall pick right now — combines value, positional urgency, and bye balance" |
+| VONA | Skip Cost | "If you skip this player, the next best at this position is X points worse" |
+| finalValue | Overall Score | "Value Score plus any dual-position bonus" |
+| positionalScarcity | (hidden in Simple, shown as bar in Advanced) | "How depleted this position is across the league" |
+
+**Intelligence panel friendly language:**
+
+| Current | Friendly |
+|---|---|
+| "VORP above replacement" | "extra points over a bench-level player" |
+| "DPP flexibility" | "extra value because they play 2 positions" |
+| "Positional scarcity: critical" | "Almost no good [position] left — pick one now!" |
+
+Plus a one-line explainer at the top of the panel: *"Higher Smart Pick Score = better pick right now. The alerts below explain why."*
+
+### Why This Matters
+
+The people who win leagues aren't necessarily the ones who understand VORP maths — they're the ones who **use a tool at all** instead of drafting on vibes. If your tool scares half the league into not using it, you've lost half the potential advantage.
+
+Smart Draft Board understood this. Their Quick Tour (5 tooltips, 30 seconds) turns a confused first-time user into someone who knows what "Smart Rank" and "VORP" mean. Their tag system (STEAL, VALUE, REACH) communicates the conclusion without requiring you to understand the derivation.
+
+After implementing Simple Mode, the comparison looks like:
+- **Easier than Smart Draft Board** — they still force you to understand "Smart Rank" from the column header alone. We'd have a one-click Simple Mode that feels like a smarter spreadsheet.
+- **More powerful when you want it** — toggle to Advanced and you get VONA, position runs, pick countdown, smokies — features they don't have at all.
+- **Draft-night speed stays the same** — Smart Pick Score + alerts + countdown are front-and-centre in both modes.
+
+---
+
 ## Core Concept: VORP (Value Over Replacement Player)
 
 ### What Is Replacement Level?
