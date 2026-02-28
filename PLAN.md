@@ -183,6 +183,9 @@ export interface LeagueSettings {
   starters: Record<Position, number>;  // DEF:6, MID:5, FWD:6, RUC:1
   emergencies: Record<Position, number>; // 1 per position
   benchSize: number;              // 6 additional flex bench spots
+  // Total bench = 10 (4 position-specific emergencies + 6 flexible bench spots)
+  // VORP only uses starters + emergencies for replacement level
+  // Flexible bench treated as FLEX in Phase 2 if needed
   dppBonusValue: number;          // Static DPP bonus (default: 3.0)
   flexEnabled: boolean;           // Whether FLEX slot adds extra value
 }
@@ -417,7 +420,9 @@ League settings also persisted to localStorage. Defaults to the user's
 
 5. **Smokies** (optional tab)
    - Filtered view of smoky-tagged players
-   - Strategy alerts by position
+   - Dynamic strategy alerts based on remaining pool, e.g.:
+     "Top 3 DEF premiums gone → next best DEF Smoky: Sam Flanders (finalValue 112.4) — midfield minutes rising"
+   - Position-specific alerts update live as players are drafted
 
 6. **Live Sync** (stretch goal)
    - League ID + X-SID input
@@ -516,8 +521,13 @@ Sam Flanders,DEF/MID,GCS,95.2,102,8,23,22,smoky,Midfield minutes rising,10003
 
 4. **No user accounts**: Single-user tool. If you want to track which team
    drafted which player, you just click "Draft to Team 1", "Draft to Team 2",
-   etc. Your team is marked in settings.
+   etc. Your team is set via a "I am Team X (1-6)" dropdown in settings,
+   so clicking "Draft" auto-assigns to you (with your team highlighted).
 
 5. **CSV is the single source of truth**: All player data comes from CSV upload.
    No API calls to external services for player data. This makes the tool
    100% offline-capable for the core functionality.
+
+6. **Sample data source**: The official 2026 Ultimate Spreadsheet can be
+   downloaded from AFL.com.au, then user adds `projScore`, `preseason26`,
+   `category`, and `smokyNote` columns, and saves as CSV.
