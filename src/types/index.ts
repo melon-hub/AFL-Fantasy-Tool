@@ -48,6 +48,10 @@ export interface PlayerWithMetrics extends Player {
   dppBonus: number;
   finalValue: number;
   valueOverAdp: number | null;
+  // Smart Rank: composite score (toggleable vs classic VORP)
+  smartRank: number;
+  positionalScarcity: number; // 0–100: how depleted best position is
+  byeValue: number; // Bye round desirability for your team
 }
 
 // ──────────────────────────────────────────────
@@ -63,6 +67,7 @@ export interface LeagueSettings {
   benchSize: number; // 6 additional flex bench spots
   dppBonusValue: number; // Static DPP bonus (default: 3.0)
   myTeamNumber: number; // "I am Team X" (1–6)
+  smartRankWeights: SmartRankWeights; // Configurable composite weights
 }
 
 // ──────────────────────────────────────────────
@@ -92,6 +97,37 @@ export interface DraftState {
   undoLastPick: () => void;
   undoLastN: (n: number) => void;
   resetDraft: () => void;
+}
+
+// ──────────────────────────────────────────────
+// Draft intelligence / recommendations
+// ──────────────────────────────────────────────
+
+/** Positional scarcity snapshot for a single position */
+export interface PositionScarcity {
+  position: Position;
+  totalStarters: number; // starters × numTeams
+  totalRostered: number; // (starters + emerg) × numTeams
+  availableCount: number; // undrafted players at this position
+  premiumsLeft: number; // undrafted premiums at this position
+  scarcityPct: number; // 0–100: how depleted (higher = scarcer)
+  urgency: "low" | "medium" | "high" | "critical";
+}
+
+/** A single draft recommendation with reasoning */
+export interface DraftRecommendation {
+  playerId: string;
+  playerName: string;
+  position: string;
+  smartRank: number;
+  reasons: string[]; // Human-readable reasons, e.g. "DEF premiums 80% gone"
+}
+
+/** Smart Rank weight configuration (user-tunable) */
+export interface SmartRankWeights {
+  vorpWeight: number; // default 0.7
+  scarcityWeight: number; // default 0.2
+  byeWeight: number; // default 0.1
 }
 
 // ──────────────────────────────────────────────

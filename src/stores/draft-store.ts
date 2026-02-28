@@ -1,9 +1,19 @@
 // src/stores/draft-store.ts
 // Main draft state managed by Zustand with localStorage persistence
+// Includes JSON export/import for cross-device portability (no account needed)
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Player, DraftPick } from "@/types";
+
+/** Shape of the exported JSON blob */
+export interface DraftExport {
+  version: 1;
+  exportedAt: string;
+  players: Player[];
+  draftPicks: DraftPick[];
+  currentOverallPick: number;
+}
 
 interface DraftStore {
   // ── Data ──
@@ -11,13 +21,17 @@ interface DraftStore {
   draftPicks: DraftPick[];
   currentOverallPick: number;
 
-  // ── Actions ──
+  // ── Draft actions ──
   loadPlayers: (players: Player[]) => void;
   draftPlayer: (playerId: string, teamNumber: number) => void;
   undraftPlayer: (playerId: string) => void;
   undoLastPick: () => void;
   undoLastN: (n: number) => void;
   resetDraft: () => void;
+
+  // ── Export/Import ──
+  exportState: () => DraftExport;
+  importState: (data: DraftExport) => void;
 }
 
 export const useDraftStore = create<DraftStore>()(
@@ -112,6 +126,31 @@ export const useDraftStore = create<DraftStore>()(
           draftPicks: [],
           currentOverallPick: 1,
         })),
+
+      // ── Export: serialize full draft state to a portable JSON blob ──
+      exportState: () => {
+        const { players, draftPicks, currentOverallPick } = get();
+        return {
+          version: 1 as const,
+          exportedAt: new Date().toISOString(),
+          players,
+          draftPicks,
+          currentOverallPick,
+        };
+      },
+
+      // ── Import: restore draft state from a previously exported blob ──
+      importState: (data) => {
+        if (data.version !== 1) {
+          console.error("Unsupported draft export version:", data.version);
+          return;
+        }
+        set({
+          players: data.players,
+          draftPicks: data.draftPicks,
+          currentOverallPick: data.currentOverallPick,
+        });
+      },
     }),
     {
       name: "afl-draft-store",

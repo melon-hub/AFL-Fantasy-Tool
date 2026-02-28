@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { LeagueSettings, Position } from "@/types";
+import type { LeagueSettings, SmartRankWeights, Position } from "@/types";
 import { DEFAULT_LEAGUE_SETTINGS } from "@/lib/constants";
 
 interface SettingsStore extends LeagueSettings {
@@ -14,6 +14,7 @@ interface SettingsStore extends LeagueSettings {
   setBenchSize: (n: number) => void;
   setDppBonusValue: (v: number) => void;
   setMyTeamNumber: (n: number) => void;
+  setSmartRankWeights: (weights: Partial<SmartRankWeights>) => void;
   resetSettings: () => void;
   getSettings: () => LeagueSettings;
 }
@@ -41,6 +42,11 @@ export const useSettingsStore = create<SettingsStore>()(
 
       setMyTeamNumber: (n) => set({ myTeamNumber: n }),
 
+      setSmartRankWeights: (weights) =>
+        set((state) => ({
+          smartRankWeights: { ...state.smartRankWeights, ...weights },
+        })),
+
       resetSettings: () => set(DEFAULT_LEAGUE_SETTINGS),
 
       getSettings: () => {
@@ -52,6 +58,7 @@ export const useSettingsStore = create<SettingsStore>()(
           benchSize: s.benchSize,
           dppBonusValue: s.dppBonusValue,
           myTeamNumber: s.myTeamNumber,
+          smartRankWeights: s.smartRankWeights,
         };
       },
     }),

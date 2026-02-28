@@ -1,6 +1,6 @@
 // src/lib/constants.ts
 
-import type { LeagueSettings, Position, CsvColumnMapping } from "@/types";
+import type { LeagueSettings, SmartRankWeights, Position, CsvColumnMapping } from "@/types";
 
 // ──────────────────────────────────────────────
 // Positions
@@ -26,6 +26,12 @@ export const POSITION_COLORS: Record<Position, string> = {
 // Default league settings (6-team standard)
 // ──────────────────────────────────────────────
 
+export const DEFAULT_SMART_RANK_WEIGHTS: SmartRankWeights = {
+  vorpWeight: 0.7,
+  scarcityWeight: 0.2,
+  byeWeight: 0.1,
+};
+
 export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
   numTeams: 6,
   starters: { DEF: 6, MID: 5, FWD: 6, RUC: 1 },
@@ -33,6 +39,7 @@ export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
   benchSize: 6, // 6 additional flexible bench spots
   dppBonusValue: 3.0,
   myTeamNumber: 1,
+  smartRankWeights: DEFAULT_SMART_RANK_WEIGHTS,
 };
 
 // Total roster per team = 18 starters + 4 emergencies + 6 bench = 28

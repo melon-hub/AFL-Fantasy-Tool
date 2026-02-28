@@ -40,6 +40,33 @@ platform.
 
 ---
 
+## Competitive Analysis (Feb 2026)
+
+Reviewed SmartDraftBoard.com/afl-draft-rankings to identify gaps worth filling.
+
+| Aspect                  | SmartDraftBoard          | Our Tool (Planned)           | Winner |
+|-------------------------|--------------------------|------------------------------|--------|
+| Persistence             | Free account (cloud)     | localStorage + JSON export   | Us     |
+| Mobile / Draft-night    | Desktop-only             | PWA — installable + offline  | Us     |
+| Dynamic ranking         | "Smart Rank" (opaque)    | Smart Rank (transparent, tuned to 6-team roster) | Us |
+| Privacy / Offline       | Requires login           | 100% client-side, no account | Us     |
+| Roster flexibility      | Generic                  | Exact 6-team with emergencies split | Us |
+| State portability       | Tied to account          | JSON export/import, copy between devices | Us |
+| Visual intelligence     | Heatmaps, tier breaks    | VORP heatmap + tier breaks + smokies alerts | Tie |
+
+### What we're borrowing (improved):
+- **Smart Rank**: Their composite score is opaque. Ours is transparent:
+  `smartRank = finalValue × 0.7 + positionalScarcity × 0.2 + byeValue × 0.1`
+  with weights visible in settings. Toggleable vs classic VORP sort.
+- **Tier break lines**: Horizontal rules in the draft board when value drops
+  significantly between adjacent players. Simple visual, big impact.
+- **Value heatmap cells**: Tailwind bg-gradient on VORP/finalValue columns
+  so premium players glow and depth players fade.
+- **Draft state export**: JSON blob download/upload replaces their "login to
+  save" — works offline, shareable, no account needed.
+
+---
+
 ## Tech Stack
 
 | Layer | Choice | Rationale |
@@ -51,6 +78,7 @@ platform.
 | State | Zustand | Lightweight, supports undo/redo pattern |
 | CSV Parsing | Papa Parse | Best-in-class CSV parser for browser |
 | Charts | Recharts | Lightweight charts for bye planner |
+| PWA | next-pwa or native manifest | Installable, offline-capable for draft night |
 | Package Manager | pnpm | Fast, disk-efficient |
 
 ---
@@ -60,6 +88,8 @@ platform.
 ```
 AFL-Fantasy-Tool/
 ├── public/
+│   ├── manifest.json                   # PWA manifest
+│   ├── icons/                          # PWA icons (192px, 512px)
 │   └── sample-data/
 │       └── players-2026-sample.csv     # Small sample CSV for demo
 ├── src/
@@ -175,6 +205,9 @@ export interface PlayerWithMetrics extends Player {
   dppBonus: number;                          // Bonus for dual-position eligibility
   finalValue: number;                        // vorp + dppBonus
   valueOverAdp: number | null;               // finalValue rank vs ADP
+  smartRank: number;                         // Composite: VORP + scarcity + bye
+  positionalScarcity: number;                // 0–100: how depleted this position is
+  byeValue: number;                          // Bye round desirability score
 }
 
 /** League configuration */
@@ -395,10 +428,12 @@ League settings also persisted to localStorage. Defaults to the user's
 
 1. **Draft Board** (default tab)
    - TanStack Table with columns: Name, Pos, Club, Proj, PS.26, Bye, VORP,
-     Final Value, Category, Notes
+     Final Value, Smart Rank, Category, Notes
+   - VORP heatmap: bg-gradient on value columns (green=high, red=low)
+   - Tier break lines: horizontal rules when value drops >8 pts between rows
    - Position filter chips (ALL / DEF / MID / FWD / RUC / DPP)
    - Search box (filter by name)
-   - Sort by any column (default: Final Value desc)
+   - Sort toggle: "Classic VORP" vs "Smart Rank" (default: Final Value desc)
    - Click row → "Draft to Team X" action
    - Smoky filter toggle (show only smokies)
 
@@ -453,6 +488,13 @@ League settings also persisted to localStorage. Defaults to the user's
 The parser should be lenient with column names (case-insensitive, trim
 whitespace, support multiple aliases).
 
+### Draft State Export/Import
+
+Full draft state can be exported as a single JSON file (players + draftHistory +
+settings) via "Download Draft" button in the header. "Upload Draft" restores
+from the same JSON blob. This replaces cloud accounts for cross-device
+portability — works 100% offline with no privacy concerns.
+
 ### Sample CSV structure:
 
 ```csv
@@ -481,26 +523,30 @@ Sam Flanders,DEF/MID,GCS,95.2,102,8,23,22,smoky,Midfield minutes rising,10003
 10. Build draft board table with TanStack Table
 11. Implement column sorting + position filtering + search
 12. Add "Draft Player" action (click → draft to team)
-13. Wire up VORP recalculation on draft/undraft
+13. Wire up VORP recalculation on draft/undraft (memoized)
+14. Add Smart Rank toggle (Classic VORP vs Smart Rank sort)
 
 ### Phase 3: Draft Features (Day 2)
-14. Build My Team panel with position grouping
-15. Build Recent Picks panel with undo
-16. Build Bye Planner with chart
-17. Implement localStorage persistence
-18. CSV upload UI component
+15. Build My Team panel with position grouping
+16. Build Recent Picks panel with undo
+17. Build Bye Planner with chart
+18. Implement localStorage persistence
+19. CSV upload UI component
 
 ### Phase 4: Polish (Day 3)
-19. Smokies filter and tab
-20. Dark mode toggle
-21. CSV export (current team + remaining pool)
-22. Keyboard shortcuts (quick draft, undo)
-23. Error handling and edge cases
+20. Smokies filter and tab with intelligence alerts
+21. VORP heatmap cells (bg-gradient by value)
+22. Tier break lines (horizontal rules on big value drops)
+23. Dark mode toggle
+24. CSV export (current team + remaining pool)
+25. Draft state JSON export/import (Download Draft / Upload Draft)
+26. PWA manifest + service worker (installable, offline draft night)
+27. Keyboard shortcuts (quick draft, undo)
+28. Error handling and edge cases
 
 ### Phase 5: Stretch Goals
-24. Live sync with AFL Fantasy (if API endpoint discovered)
-25. ADP comparison column
-26. PWA support for offline use
+29. Live sync with AFL Fantasy (if API endpoint discovered)
+30. ADP comparison column
 
 ---
 
@@ -531,3 +577,12 @@ Sam Flanders,DEF/MID,GCS,95.2,102,8,23,22,smoky,Midfield minutes rising,10003
 6. **Sample data source**: The official 2026 Ultimate Spreadsheet can be
    downloaded from AFL.com.au, then user adds `projScore`, `preseason26`,
    `category`, and `smokyNote` columns, and saves as CSV.
+
+7. **Installable PWA**: Manifest + service worker so you can install it on
+   your phone for draft night. Works 100% offline once loaded — no network
+   needed during the live draft.
+
+8. **Smart Rank is transparent**: Unlike SmartDraftBoard's opaque composite
+   score, our weights are visible and configurable:
+   `smartRank = finalValue × 0.7 + positionalScarcity × 0.2 + byeValue × 0.1`.
+   Toggleable — you can always switch back to classic VORP sort.
