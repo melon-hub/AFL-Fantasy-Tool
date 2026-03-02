@@ -269,12 +269,58 @@ function extractCandidateUrlsFromHtml(html: string, leagueId: string): string[] 
   return out;
 }
 
+async function fetchWithSession(
+  url: string,
+  leagueId: string,
+  xSid: string,
+  timeoutMs = 6500
+) {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Cookie: `X-SID=${xSid}`,
+        Accept: "application/json,text/plain,*/*",
+        Referer: `https://fantasy.afl.com.au/draft/league/${leagueId}/draft`,
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+      },
+      redirect: "follow",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    return {
+      response,
+      error: null as string | null,
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error
+        ? err.name === "AbortError"
+          ? `timeout after ${timeoutMs}ms`
+          : err.message
+        : "network fetch failed";
+    return {
+      response: null as Response | null,
+      error: message,
+      durationMs: Date.now() - startedAt,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const stored = getCredentials();
 
-  const leagueId = body.leagueId || stored?.leagueId;
-  const xSid = body.xSid || stored?.xSid;
+  const leagueId = String(body.leagueId ?? stored?.leagueId ?? "").trim();
+  const xSid = String(body.xSid ?? stored?.xSid ?? "").trim();
 
   if (!leagueId || !xSid) {
     return NextResponse.json(
@@ -307,182 +353,197 @@ export async function POST(request: NextRequest) {
       if (tried.has(url)) continue;
       tried.add(url);
 
-      const response = await fetch(url, {
-        headers: {
-          Cookie: `X-SID=${xSid}`,
-          Accept: "application/json,text/plain,*/*",
-        },
-        redirect: "follow",
-        cache: "no-store",
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        return NextResponse.json(
-          { success: false, error: "Session expired — reconnect", expired: true },
-          { status: 401 }
+      const attempt = await fetchWithSession(url, leagueId, xSid);
+      if (!attempt.response) {
+        endpointErrors.push(
+          `${url} -> network error (${attempt.error ?? "unknown"})`
         );
-      }
-
-      if (!response.ok) {
-        endpointErrors.push(`${url} -> HTTP ${response.status}`);
         continue;
       }
-
-      const text = await response.text();
-      const contentType = response.headers.get("content-type") ?? "";
-      let jsonData: unknown;
-      let parsedJson = false;
+      const response = attempt.response;
 
       try {
-        jsonData = JSON.parse(text);
-        parsedJson = true;
-      } catch {
-        parsedJson = false;
-      }
-
-      if (parsedJson) {
-        const payload = jsonData as Record<string, unknown>;
-        const successNode = payload.success as Record<string, unknown> | undefined;
-
-        // 2026 endpoint shape:
-        // /api/en/draft/draft-process/{leagueId}/draft-board
-        // -> { success: { completedPicks: [...] }, errors: [] }
-        if (successNode && Array.isArray(successNode.completedPicks)) {
-          const [teamsResponse, leagueResponse] = await Promise.all([
-            fetch(teamsUrl, {
-              headers: {
-                Cookie: `X-SID=${xSid}`,
-                Accept: "application/json,text/plain,*/*",
-              },
-              cache: "no-store",
-            }),
-            fetch(leagueUrl, {
-              headers: {
-                Cookie: `X-SID=${xSid}`,
-                Accept: "application/json,text/plain,*/*",
-              },
-              cache: "no-store",
-            }),
-          ]);
-
-          if (
-            teamsResponse.status === 401 ||
-            teamsResponse.status === 403 ||
-            leagueResponse.status === 401 ||
-            leagueResponse.status === 403
-          ) {
-            return NextResponse.json(
-              { success: false, error: "Session expired — reconnect", expired: true },
-              { status: 401 }
-            );
-          }
-
-          const teamsData = teamsResponse.ok
-            ? await teamsResponse.json().catch(() => null)
-            : null;
-          const leagueData = leagueResponse.ok
-            ? await leagueResponse.json().catch(() => null)
-            : null;
-
-          const teams = parseTeams(teamsData);
-          const teamLookup = new Map<string, TeamLookupEntry>(
-            teams.map((team) => [
-              team.id,
-              {
-                name: team.name,
-                ownerName: team.ownerName,
-                isAutopick: team.isAutopick,
-              },
-            ])
+        if (response.status === 401 || response.status === 403) {
+          return NextResponse.json(
+            { success: false, error: "Session expired — reconnect", expired: true },
+            { status: 401 }
           );
-          const league = parseLeague(leagueData);
-
-          const completedPicks = mapPicks(
-            successNode.completedPicks as unknown[],
-            teamLookup
-          );
-          const activePick = successNode.activePick
-            ? mapDraftSlot(successNode.activePick, teamLookup)
-            : null;
-          const nextUp = Array.isArray(successNode.futurePicks)
-            ? (successNode.futurePicks as unknown[])
-                .slice(0, 8)
-                .map((slot) => mapDraftSlot(slot, teamLookup))
-            : [];
-
-          return NextResponse.json({
-            success: true,
-            picks: completedPicks,
-            meta: {
-              sourceUrl: url,
-              league,
-              teams,
-              activePick,
-              nextUp,
-              totalCompletedPicks: completedPicks.length,
-              polledAt: new Date().toISOString(),
-            },
-            raw: jsonData, // included so "Test Connection" can log full shape
-          });
         }
 
-        const rawPicks = extractRawPicks(jsonData);
-        if (rawPicks.length > 0) {
-          const teamLookup = new Map<string, TeamLookupEntry>();
-          return NextResponse.json({
-            success: true,
-            picks: mapPicks(rawPicks, teamLookup),
-            meta: {
-              sourceUrl: url,
-              polledAt: new Date().toISOString(),
-            },
-            raw: jsonData, // included so "Test Connection" can log full shape
-          });
-        }
-
-        const apiErrors = Array.isArray(payload.errors)
-          ? payload.errors.filter((e) => e && typeof e === "object")
-          : [];
-        if (apiErrors.length > 0) {
-          const first = apiErrors[0] as Record<string, unknown>;
-          const message = String(first.message ?? "unknown API error");
-          endpointErrors.push(`${url} -> API error (${message})`);
+        if (!response.ok) {
+          endpointErrors.push(`${url} -> HTTP ${response.status}`);
           continue;
         }
 
-        endpointErrors.push(
-          `${url} -> JSON but no pick-like array (content-type: ${contentType || "unknown"})`
-        );
+        const text = await response.text();
+        const contentType = response.headers.get("content-type") ?? "";
+        let jsonData: unknown;
+        let parsedJson = false;
+
+        try {
+          jsonData = JSON.parse(text);
+          parsedJson = true;
+        } catch {
+          parsedJson = false;
+        }
+
+        if (parsedJson) {
+          const payload = jsonData as Record<string, unknown>;
+          const successNode = payload.success as Record<string, unknown> | undefined;
+
+          // 2026 endpoint shape:
+          // /api/en/draft/draft-process/{leagueId}/draft-board
+          // -> { success: { completedPicks: [...] }, errors: [] }
+          if (successNode && Array.isArray(successNode.completedPicks)) {
+            const [teamsAttempt, leagueAttempt] = await Promise.all([
+              fetchWithSession(teamsUrl, leagueId, xSid),
+              fetchWithSession(leagueUrl, leagueId, xSid),
+            ]);
+
+            const teamsResponse = teamsAttempt.response;
+            const leagueResponse = leagueAttempt.response;
+
+            if (
+              teamsResponse?.status === 401 ||
+              teamsResponse?.status === 403 ||
+              leagueResponse?.status === 401 ||
+              leagueResponse?.status === 403
+            ) {
+              return NextResponse.json(
+                { success: false, error: "Session expired — reconnect", expired: true },
+                { status: 401 }
+              );
+            }
+
+            const teamsData = teamsResponse?.ok
+              ? await teamsResponse.json().catch(() => null)
+              : null;
+            const leagueData = leagueResponse?.ok
+              ? await leagueResponse.json().catch(() => null)
+              : null;
+
+            const teams = parseTeams(teamsData);
+            const teamLookup = new Map<string, TeamLookupEntry>(
+              teams.map((team) => [
+                team.id,
+                {
+                  name: team.name,
+                  ownerName: team.ownerName,
+                  isAutopick: team.isAutopick,
+                },
+              ])
+            );
+            const league = parseLeague(leagueData);
+
+            const completedPicks = mapPicks(
+              successNode.completedPicks as unknown[],
+              teamLookup
+            );
+            const activePick = successNode.activePick
+              ? mapDraftSlot(successNode.activePick, teamLookup)
+              : null;
+            const nextUp = Array.isArray(successNode.futurePicks)
+              ? (successNode.futurePicks as unknown[])
+                  .slice(0, 8)
+                  .map((slot) => mapDraftSlot(slot, teamLookup))
+              : [];
+
+            const metaWarnings: string[] = [];
+            if (!teamsResponse) {
+              metaWarnings.push(
+                `teams endpoint network error (${teamsAttempt.error ?? "unknown"})`
+              );
+            } else if (!teamsResponse.ok) {
+              metaWarnings.push(`teams endpoint HTTP ${teamsResponse.status}`);
+            }
+            if (!leagueResponse) {
+              metaWarnings.push(
+                `league endpoint network error (${leagueAttempt.error ?? "unknown"})`
+              );
+            } else if (!leagueResponse.ok) {
+              metaWarnings.push(`league endpoint HTTP ${leagueResponse.status}`);
+            }
+
+            return NextResponse.json({
+              success: true,
+              picks: completedPicks,
+              meta: {
+                sourceUrl: url,
+                league,
+                teams,
+                activePick,
+                nextUp,
+                totalCompletedPicks: completedPicks.length,
+                polledAt: new Date().toISOString(),
+                warnings: metaWarnings,
+              },
+              raw: jsonData, // included so "Test Connection" can log full shape
+            });
+          }
+
+          const rawPicks = extractRawPicks(jsonData);
+          if (rawPicks.length > 0) {
+            const teamLookup = new Map<string, TeamLookupEntry>();
+            return NextResponse.json({
+              success: true,
+              picks: mapPicks(rawPicks, teamLookup),
+              meta: {
+                sourceUrl: url,
+                polledAt: new Date().toISOString(),
+              },
+              raw: jsonData, // included so "Test Connection" can log full shape
+            });
+          }
+
+          const apiErrors = Array.isArray(payload.errors)
+            ? payload.errors.filter((e) => e && typeof e === "object")
+            : [];
+          if (apiErrors.length > 0) {
+            const first = apiErrors[0] as Record<string, unknown>;
+            const message = String(first.message ?? "unknown API error");
+            endpointErrors.push(`${url} -> API error (${message})`);
+            continue;
+          }
+
+          endpointErrors.push(
+            `${url} -> JSON but no pick-like array (content-type: ${contentType || "unknown"})`
+          );
+          continue;
+        }
+
+        // HTML fallback: try extracting Next.js embedded JSON, then discover
+        // additional candidate URLs inside the page source.
+        const nextData = extractNextData(text);
+        if (nextData) {
+          const rawPicks = extractRawPicks(nextData);
+          if (rawPicks.length > 0) {
+            const teamLookup = new Map<string, TeamLookupEntry>();
+            return NextResponse.json({
+              success: true,
+              picks: mapPicks(rawPicks, teamLookup),
+              meta: {
+                sourceUrl: url,
+                polledAt: new Date().toISOString(),
+              },
+              raw: nextData,
+            });
+          }
+        }
+
+        for (const discovered of extractCandidateUrlsFromHtml(text, leagueId)) {
+          if (!tried.has(discovered) && !queue.includes(discovered)) {
+            queue.push(discovered);
+          }
+        }
+
+        const preview = text.slice(0, 80).replace(/\s+/g, " ");
+        endpointErrors.push(`${url} -> non-JSON response (${preview})`);
+      } catch (endpointErr: unknown) {
+        const message =
+          endpointErr instanceof Error ? endpointErr.message : "endpoint parse failed";
+        endpointErrors.push(`${url} -> handler error (${message})`);
         continue;
       }
-
-      // HTML fallback: try extracting Next.js embedded JSON, then discover
-      // additional candidate URLs inside the page source.
-      const nextData = extractNextData(text);
-      if (nextData) {
-        const rawPicks = extractRawPicks(nextData);
-        if (rawPicks.length > 0) {
-          const teamLookup = new Map<string, TeamLookupEntry>();
-          return NextResponse.json({
-            success: true,
-            picks: mapPicks(rawPicks, teamLookup),
-            meta: {
-              sourceUrl: url,
-              polledAt: new Date().toISOString(),
-            },
-            raw: nextData,
-          });
-        }
-      }
-
-      for (const discovered of extractCandidateUrlsFromHtml(text, leagueId)) {
-        if (!tried.has(discovered) && !queue.includes(discovered)) {
-          queue.push(discovered);
-        }
-      }
-
-      const preview = text.slice(0, 80).replace(/\s+/g, " ");
-      endpointErrors.push(`${url} -> non-JSON response (${preview})`);
     }
 
     return NextResponse.json(

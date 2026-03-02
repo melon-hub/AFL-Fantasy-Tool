@@ -9,8 +9,9 @@ import type {
   Position,
   DraftPhase,
   PhaseWeightVector,
+  PickNowWeights,
 } from "@/types";
-import { DEFAULT_LEAGUE_SETTINGS } from "@/lib/constants";
+import { DEFAULT_LEAGUE_SETTINGS, DEFAULT_PICK_NOW_WEIGHTS } from "@/lib/constants";
 
 interface SettingsStore extends LeagueSettings {
   // Actions
@@ -21,6 +22,7 @@ interface SettingsStore extends LeagueSettings {
   setDppBonusValue: (v: number) => void;
   setMyTeamNumber: (n: number) => void;
   setSmartRankWeights: (weights: Partial<SmartRankWeights>) => void;
+  setPickNowWeights: (weights: Partial<PickNowWeights>) => void;
   setUsePickNowScore: (enabled: boolean) => void;
   setPhaseBoundary: (key: "earlyToMid" | "midToLate", value: number) => void;
   setPhaseWeight: (
@@ -60,6 +62,11 @@ export const useSettingsStore = create<SettingsStore>()(
           smartRankWeights: { ...state.smartRankWeights, ...weights },
         })),
 
+      setPickNowWeights: (weights) =>
+        set((state) => ({
+          pickNowWeights: { ...state.pickNowWeights, ...weights },
+        })),
+
       setUsePickNowScore: (enabled) => set({ usePickNowScore: enabled }),
 
       setPhaseBoundary: (key, value) =>
@@ -96,6 +103,7 @@ export const useSettingsStore = create<SettingsStore>()(
         set({
           phaseBoundaries: DEFAULT_LEAGUE_SETTINGS.phaseBoundaries,
           phaseWeights: DEFAULT_LEAGUE_SETTINGS.phaseWeights,
+          pickNowWeights: DEFAULT_PICK_NOW_WEIGHTS,
           usePickNowScore: DEFAULT_LEAGUE_SETTINGS.usePickNowScore,
         }),
 
@@ -113,6 +121,7 @@ export const useSettingsStore = create<SettingsStore>()(
           smartRankWeights: s.smartRankWeights,
           phaseBoundaries: s.phaseBoundaries,
           phaseWeights: s.phaseWeights,
+          pickNowWeights: s.pickNowWeights,
           usePickNowScore: s.usePickNowScore,
         };
       },
@@ -142,6 +151,10 @@ export const useSettingsStore = create<SettingsStore>()(
           starters: { ...current.starters, ...(p.starters ?? {}) },
           emergencies: { ...current.emergencies, ...(p.emergencies ?? {}) },
           smartRankWeights: mergedSmartRankWeights,
+          pickNowWeights: {
+            ...current.pickNowWeights,
+            ...(p.pickNowWeights ?? {}),
+          },
           phaseBoundaries: {
             ...current.phaseBoundaries,
             ...(p.phaseBoundaries ?? {}),

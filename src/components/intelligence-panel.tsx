@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import {
   Flame,
-  AlertTriangle,
   Clock,
   History,
   ChevronRight,
@@ -12,10 +11,8 @@ import {
 import clsx from "clsx";
 import type { PlayerWithMetrics, DraftPick, Position } from "@/types";
 import type { LeagueSettings } from "@/types";
-import { POSITIONS, POSITION_COLORS } from "@/lib/constants";
+import { POSITIONS } from "@/lib/constants";
 import {
-  calculateDraftPhase,
-  detectPositionRuns,
   calculatePickCountdown,
 } from "@/lib/vorp";
 
@@ -79,16 +76,6 @@ export function IntelligencePanel({
   );
 
   const myDraftedCount = myDraftedPlayers.length;
-
-  const phaseState = useMemo(
-    () => calculateDraftPhase(currentOverallPick, settings, myDraftedCount),
-    [currentOverallPick, myDraftedCount, settings]
-  );
-
-  const positionRuns = useMemo(
-    () => detectPositionRuns(draftPicks, players),
-    [draftPicks, players]
-  );
 
   const countdown = useMemo(
     () =>
@@ -216,7 +203,7 @@ export function IntelligencePanel({
       .map((p) => {
         const adp = p.adp ?? nextPick + 24;
         const urgencyBeforeNextPick = Math.max(0, nextPick - adp);
-        const valueSignal = Math.max(0, p.adpValueGap ?? 0);
+        const valueSignal = Math.max(0, p.valueOverAdp ?? 0);
         const vonaSignal = Math.max(0, p.vona ?? 0);
 
         // Higher score => stronger case to take before your next turn.
@@ -271,32 +258,18 @@ export function IntelligencePanel({
           <Clock className="h-3.5 w-3.5" />
           Pick Countdown
         </h3>
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-            {phaseState.phase.toUpperCase()}
-          </span>
-        </div>
-        <div className="flex items-baseline gap-1">
-          <span className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            {countdown.picksUntilMyTurn}
-          </span>
-          <span className="text-[11px] text-zinc-500">to #{countdown.myNextOverallPick}</span>
-        </div>
-        <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5">
-          {POSITIONS.map((pos) => {
-            const proj = countdown.projectedAvailableByPosition[pos];
-            return (
-              <div key={pos} className="flex items-center justify-between text-[11px]">
-                <span className={clsx("rounded px-1 py-0.5 font-medium text-white", POSITION_COLORS[pos])}>
-                  {pos}
-                </span>
-                <span className="font-mono text-zinc-500">
-                  {proj.now}{" > "}{proj.projected}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        {countdown.picksUntilMyTurn <= 0 ? (
+          <p className="text-sm font-medium text-green-600 dark:text-green-400">
+            You are on the clock.
+          </p>
+        ) : (
+          <p className="text-sm text-zinc-500">
+            <strong className="text-xl leading-none text-zinc-900 dark:text-zinc-100">
+              {countdown.picksUntilMyTurn}
+            </strong>{" "}
+            picks until your turn
+          </p>
+        )}
       </section>
 
       {/* My Recent Picks */}
@@ -374,24 +347,6 @@ export function IntelligencePanel({
         </div>
 
       </section>
-
-      {/* Position Run Alerts */}
-      {positionRuns.length > 0 && (
-        <section className="col-span-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 dark:border-amber-700 dark:bg-amber-950/50">
-          <h3 className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Position Run
-          </h3>
-          {positionRuns.map((alert, i) => (
-            <p
-              key={i}
-              className="text-[11px] text-amber-800 dark:text-amber-200"
-            >
-              {alert.message}
-            </p>
-          ))}
-        </section>
-      )}
 
       {/* Smokies Near Next Pick */}
       <section className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">

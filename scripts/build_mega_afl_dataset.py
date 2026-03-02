@@ -35,7 +35,19 @@ except Exception:  # pragma: no cover - optional dependency in local envs
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCES_DIR = ROOT / "data" / "sources"
-DEFAULT_RANKINGS_CSV = DEFAULT_SOURCES_DIR / "rankings-afl-fantasy-2026-02-28.csv"
+
+
+def first_existing_path(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+DEFAULT_RANKINGS_CSV = first_existing_path(
+    DEFAULT_SOURCES_DIR / "rankings-afl-fantasy-2026-02-28.csv",
+    DEFAULT_SOURCES_DIR / "League 14 default (1).csv",
+)
 DEFAULT_ULTIMATE_XLSX = DEFAULT_SOURCES_DIR / "AFL-Fantasy-Draft-2026-Ultimate-Spreadsheet.xlsx"
 DEFAULT_EXPERT_XLSX = DEFAULT_SOURCES_DIR / "2026-AF-Ranks-v2-8wtts9.xlsx"
 DEFAULT_DATA_CSV = DEFAULT_SOURCES_DIR / "data.csv"
@@ -281,7 +293,47 @@ def read_sheet_rows(zf: zipfile.ZipFile, sheet_path: str, shared_strings: list[s
 
 def load_rankings_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8-sig") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+
+    if not rows:
+        return []
+
+    # Support league-export style files (e.g. "League 14 default ...csv")
+    # by normalizing into canonical keys used downstream.
+    lower_to_header = {h.strip().lower(): h for h in rows[0].keys() if h}
+    if "name" in lower_to_header and "projectedscoresavg" in lower_to_header:
+        def from_alias(row: dict[str, str], *aliases: str) -> str:
+            for alias in aliases:
+                header = lower_to_header.get(alias.lower())
+                if not header:
+                    continue
+                value = row.get(header)
+                if value is not None:
+                    return value
+            return ""
+
+        normalised_rows: list[dict[str, str]] = []
+        for row in rows:
+            normalised_rows.append(
+                {
+                    "Name": from_alias(row, "name"),
+                    "Position": from_alias(row, "position"),
+                    "Team": from_alias(row, "team", "club"),
+                    "ADP": from_alias(row, "adp"),
+                    "Projected": from_alias(row, "projectedscoresavg", "projected"),
+                    "2025 Avg": from_alias(row, "averagepoints", "avg", "avg_2025"),
+                    "Rank": from_alias(row, "seasonrank", "rank"),
+                    "Bye Round": from_alias(row, "byerounds", "bye", "bye_round"),
+                    "VORP": from_alias(row, "vorp"),
+                    "Injury": from_alias(row, "injury"),
+                    "CBA%": from_alias(row, "cba%"),
+                    "L5": from_alias(row, "last5avg", "l5"),
+                    "Max": from_alias(row, "highscore", "max"),
+                }
+            )
+        return normalised_rows
+
+    return rows
 
 
 def load_data_csv(path: Path) -> list[dict[str, str]]:
@@ -1100,16 +1152,24 @@ def build_datasets(
         primary_pos = pos.split("/")[0] if pos else ""
 
         market_rank = safe_int(r_csv.get("Rank"))
-        adp = first_non_null(safe_float(r_csv.get("ADP")), safe_float(r_d.get("ADP")))
+        adp_rankings = safe_float(r_csv.get("ADP"))
+        adp_data = safe_float(r_d.get("ADP"))
+        if adp_rankings is not None and adp_data is not None:
+            adp = (adp_rankings + adp_data) / 2.0
+        else:
+            adp = first_non_null(adp_rankings, adp_data)
         adp = round(adp, 1) if adp is not None else None
 
-        proj_candidates = [
-            safe_float(r_csv.get("Projected")),
-            safe_float(r_u.get("AVG")),
-            safe_float(r_d.get("Projected")),
-        ]
-        proj_values = [x for x in proj_candidates if x is not None]
-        proj_score = round(statistics.median(proj_values), 1) if proj_values else None
+        # Projection policy:
+        # use max(data.Projected, league projectedScoresAvg), fallback to Ultimate AVG.
+        proj_from_rankings = safe_float(r_csv.get("Projected"))
+        proj_from_data = safe_float(r_d.get("Projected"))
+        proj_from_ultimate = safe_float(r_u.get("AVG"))
+        proj_values = [x for x in [proj_from_rankings, proj_from_data] if x is not None]
+        if proj_values:
+            proj_score = round(max(proj_values), 1)
+        else:
+            proj_score = round(proj_from_ultimate, 1) if proj_from_ultimate is not None else None
         proj_spread = round(max(proj_values) - min(proj_values), 1) if len(proj_values) >= 2 else 0.0
 
         ps26 = first_non_null(safe_float(r_csv.get("L5")), safe_float(r_d.get("B23")))
@@ -1130,13 +1190,19 @@ def build_datasets(
             safe_int(r_stats.get("stats_reg_games_2025")),
         )
         # Canonical 2025 average for app use:
-        # prefer Ultimate sheet AVG (closest to actual AFL Fantasy season average),
-        # fallback to rankings CSV 2025 Avg if missing.
+        # source-of-truth is Ultimate AVG, with safe fallbacks.
         ultimate_avg_2025 = safe_float(r_u.get("AVG"))
+        data_avg_2025 = safe_float(r_d.get("Av.25"))
         afl_reg_avg_2025 = safe_float(r_af.get("REG"))
         stats_reg_avg_2025 = safe_float(r_stats.get("stats_reg_avg_2025"))
         rankings_avg_2025 = safe_float(r_csv.get("2025 Avg"))
-        avg_score_2025 = first_non_null(ultimate_avg_2025, afl_reg_avg_2025, stats_reg_avg_2025, rankings_avg_2025)
+        avg_score_2025 = first_non_null(
+            ultimate_avg_2025,
+            rankings_avg_2025,
+            data_avg_2025,
+            afl_reg_avg_2025,
+            stats_reg_avg_2025,
+        )
         if avg_score_2025 is not None:
             avg_score_2025 = round(avg_score_2025, 1)
 
@@ -1164,9 +1230,9 @@ def build_datasets(
         stats_finals_games_2025 = safe_int(r_stats.get("stats_finals_games_2025"))
         stats_finals_avg_2025 = safe_float(r_stats.get("stats_finals_avg_2025"))
 
-        # Prefer the richer AFL Fantasy workbook when available, fallback to original Ultimate columns.
-        ultimate_x100_2025 = first_non_null(afl_100_plus_2025, safe_int(r_u.get("x100")))
-        ultimate_x120_2025 = first_non_null(afl_120_plus_2025, safe_int(r_u.get("x120")))
+        # Consistency source-of-truth is Ultimate x100/x120, fallback to enrichment sheets if needed.
+        ultimate_x100_2025 = first_non_null(safe_int(r_u.get("x100")), afl_100_plus_2025)
+        ultimate_x120_2025 = first_non_null(safe_int(r_u.get("x120")), afl_120_plus_2025)
         ultimate_cba_pct = first_non_null(afl_cba_pct_2025, safe_float(r_u.get("CBA%")))
 
         relative_value = safe_float(r_d.get("Relative Value"))
@@ -1921,7 +1987,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    for file_path in [args.rankings_csv, args.ultimate_xlsx, args.expert_xlsx, args.data_csv]:
+    for file_path in [args.rankings_csv, args.ultimate_xlsx, args.data_csv]:
         if not file_path.exists():
             raise FileNotFoundError(f"Input file not found: {file_path}")
 
@@ -1929,7 +1995,12 @@ def main() -> None:
 
     rankings_rows = load_rankings_csv(args.rankings_csv)
     ultimate_rows = load_ultimate_xlsx(args.ultimate_xlsx)
-    expert_rows, expert_sheet_sizes = load_expert_xlsx(args.expert_xlsx)
+    expert_rows: list[dict[str, Any]] = []
+    expert_sheet_sizes: dict[str, int] = {}
+    if args.expert_xlsx.exists():
+        expert_rows, expert_sheet_sizes = load_expert_xlsx(args.expert_xlsx)
+    else:
+        print(f"Info: optional source not found (skipping): {args.expert_xlsx}")
     data_rows = load_data_csv(args.data_csv)
     afl_fantasy_rows: list[dict[str, str]] = []
     if args.afl_fantasy_xlsx.exists():

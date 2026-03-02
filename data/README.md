@@ -7,10 +7,16 @@ This project keeps input sources and generated outputs separate:
 
 ## Expected Source Files
 
-- `rankings-afl-fantasy-2026-02-28.csv`
+Minimum (3-file mode):
+
 - `AFL-Fantasy-Draft-2026-Ultimate-Spreadsheet.xlsx`
-- `2026-AF-Ranks-v2-8wtts9.xlsx`
+- `League 14 default (1).csv` (or `rankings-afl-fantasy-2026-02-28.csv`)
 - `data.csv`
+
+Extended/optional enrichment:
+
+- `rankings-afl-fantasy-2026-02-28.csv`
+- `2026-AF-Ranks-v2-8wtts9.xlsx`
 - `2026-Draft-Kit-gs7zws.pdf`
 - `2026-AFL-Fantasy-Draft-Kit.pdf`
 - `afl-fantasy-2026.xlsx` (optional enrichment)

@@ -49,10 +49,10 @@ function normaliseText(value: unknown): string {
 
 function parseRiskBase(risk: string | null | undefined): number {
   const r = normaliseText(risk).toLowerCase();
-  if (r === "low") return 20;
-  if (r === "medium") return 55;
-  if (r === "high") return 85;
-  return 45;
+  if (r === "low") return 15;
+  if (r === "medium") return 40;
+  if (r === "high") return 75;
+  return 35;
 }
 
 function textIndicatesSeasonOut(text: string | null | undefined): boolean {
@@ -78,12 +78,51 @@ function isSeasonLongUnavailable(player: Player): boolean {
 function calculateRiskScore(player: Player): number {
   if (isSeasonLongUnavailable(player)) return 100;
   const injuryPenalty = normaliseText(player.injury) ? 10 : 0;
-  return clamp(parseRiskBase(player.risk) + injuryPenalty, 0, 100);
+  const games = player.games2025;
+
+  // Durability overlay: force at least medium risk for thin seasons.
+  let durabilityFloor = 0;
+  if (games != null) {
+    if (games <= 14) durabilityFloor = 45;
+    else if (games <= 17) durabilityFloor = 35;
+  }
+
+  // Continuous missed-games penalty so risk scales smoothly as availability drops.
+  const missedGamesPenalty =
+    games == null
+      ? 0
+      : clamp(((23 - clamp(games, 0, 23)) / 23) * 10, 0, 10);
+
+  const baseRisk = parseRiskBase(player.risk) + injuryPenalty + missedGamesPenalty;
+  return clamp(Math.max(baseRisk, durabilityFloor), 0, 100);
 }
 
 function calculateConsistencyScore(player: Player): number {
-  if (player.games2025 == null) return 60;
-  return clamp((player.games2025 / 23) * 100, 25, 100);
+  const availabilityScore =
+    player.games2025 == null
+      ? 60
+      : clamp((player.games2025 / 23) * 100, 25, 100);
+
+  const x100 = player.x100_2025;
+  const x120 = player.x120_2025;
+  if (x100 == null && x120 == null) return availabilityScore;
+
+  // Rate of premium scores; x120 is rarer so it gets extra emphasis.
+  const sampleGames = Math.max(
+    player.games2025 ?? 0,
+    x100 ?? 0,
+    x120 ?? 0,
+    1
+  );
+  const x100RateScore = clamp(((x100 ?? 0) / sampleGames) * 100, 0, 100);
+  const x120RateScore = clamp(((x120 ?? 0) / sampleGames) * 170, 0, 100);
+  const premiumCeilingScore = 0.65 * x100RateScore + 0.35 * x120RateScore;
+
+  if (player.games2025 == null) {
+    return clamp(0.45 * 60 + 0.55 * premiumCeilingScore, 25, 100);
+  }
+
+  return clamp(0.65 * availabilityScore + 0.35 * premiumCeilingScore, 25, 100);
 }
 
 export function calculateDraftPhase(
@@ -263,7 +302,6 @@ export function calculateVorp(
     settings,
     myTeamPlayers.length
   );
-  const phaseWeights = settings.phaseWeights[draftPhase.phase];
 
   const { vorpWeight, scarcityWeight, byeWeight } = settings.smartRankWeights;
 
@@ -289,7 +327,18 @@ export function calculateVorp(
 
     // DPP bonus: static bonus for players with 2+ positions
     const dppBonus = player.positions.length > 1 ? settings.dppBonusValue : 0;
-    const finalValue = bestVorp + dppBonus;
+
+    // Form/durability overlay to reduce projection-only bias:
+    // - rewards sustained scoring history relative to projection
+    // - lightly penalises thin game samples
+    const avg25 = player.avgScore2025 ?? player.projScore;
+    const formAdjustment = clamp((avg25 - player.projScore) * 0.35, -8, 8);
+    const availabilityAdjustment =
+      player.games2025 == null
+        ? 0
+        : clamp((player.games2025 - 18) * 0.25, -2, 1.5);
+
+    const finalValue = bestVorp + dppBonus + formAdjustment + availabilityAdjustment;
 
     // Positional scarcity for this player's best position
     const positionalScarcity = scarcity[bestPos].scarcityPct;
@@ -297,13 +346,9 @@ export function calculateVorp(
     // Bye value relative to my team
     const byeValue = calculateByeValue(player.bye, myTeamPlayers);
 
-    // Smart Rank: weighted composite (normalised VORP component)
-    // finalValue is the raw score, scarcity and bye are 0–100
-    // We normalise finalValue to a 0–100 scale based on available pool
-    const smartRank =
-      finalValue * vorpWeight +
-      positionalScarcity * scarcityWeight +
-      byeValue * byeWeight;
+    // Smart Rank is set in a second pass once finalValue can be
+    // normalised against the available pool.
+    const smartRank = 0;
 
     return {
       ...player,
@@ -324,8 +369,35 @@ export function calculateVorp(
     };
   });
 
+  // Normalise raw value to 0-100 so Smart Rank weights are comparable.
+  // Without this, scarcity/bye (already 0-100) can dominate early picks.
+  const availableValuePool = withMetrics
+    .filter((p) => !p.isDrafted)
+    .map((p) => p.finalValue);
+  const finalValueMin =
+    availableValuePool.length > 0 ? Math.min(...availableValuePool) : 0;
+  const finalValueMax =
+    availableValuePool.length > 0 ? Math.max(...availableValuePool) : 100;
+
+  const withSmartRank = withMetrics.map((p) => {
+    const finalValueNorm = normaliseMinMax(
+      p.finalValue,
+      finalValueMin,
+      finalValueMax,
+      50
+    );
+
+    return {
+      ...p,
+      smartRank:
+        finalValueNorm * vorpWeight +
+        p.positionalScarcity * scarcityWeight +
+        p.byeValue * byeWeight,
+    };
+  });
+
   // Second pass: rank by finalValue, compute valueOverAdp and VONA
-  const ranked = [...withMetrics]
+  const ranked = [...withSmartRank]
     .filter((p) => !p.isDrafted)
     .sort((a, b) => b.finalValue - a.finalValue);
 
@@ -353,7 +425,7 @@ export function calculateVorp(
     }
   }
 
-  const withSecondary = withMetrics.map((p) => {
+  const withSecondary = withSmartRank.map((p) => {
     const rank = rankMap.get(p.id);
     return {
       ...p,
@@ -362,29 +434,88 @@ export function calculateVorp(
     };
   });
 
+  // Team-shape context for Pick-Now:
+  // scale scarcity by how many starter slots YOU still need at that position.
+  // This prevents 1-slot RUC from crowding out 5/6-slot lines unnecessarily.
+  const myStarterCountByPos: Record<Position, number> = {
+    DEF: 0,
+    MID: 0,
+    RUC: 0,
+    FWD: 0,
+  };
+  for (const p of withSecondary) {
+    if (p.isDrafted && p.draftedBy === settings.myTeamNumber) {
+      myStarterCountByPos[p.bestVorpPosition] += 1;
+    }
+  }
+  const remainingStarterNeedByPos: Record<Position, number> = {
+    DEF: Math.max(0, settings.starters.DEF - myStarterCountByPos.DEF),
+    MID: Math.max(0, settings.starters.MID - myStarterCountByPos.MID),
+    RUC: Math.max(0, settings.starters.RUC - myStarterCountByPos.RUC),
+    FWD: Math.max(0, settings.starters.FWD - myStarterCountByPos.FWD),
+  };
+  const maxStarterNeed = Math.max(
+    1,
+    ...POSITIONS.map((pos) => remainingStarterNeedByPos[pos])
+  );
+
+  const pickNowWeights = settings.pickNowWeights;
+  const pickNowWeightTotal =
+    pickNowWeights.avg25 +
+    pickNowWeights.projection +
+    pickNowWeights.consistency +
+    pickNowWeights.adp +
+    pickNowWeights.scarcity;
+  const safeTotal = pickNowWeightTotal > 0 ? pickNowWeightTotal : 1;
+  const wAvg = pickNowWeights.avg25 / safeTotal;
+  const wProj = pickNowWeights.projection / safeTotal;
+  const wConsistency = pickNowWeights.consistency / safeTotal;
+  const wAdp = pickNowWeights.adp / safeTotal;
+  const wScarcity = pickNowWeights.scarcity / safeTotal;
+
   const availableSecondary = withSecondary.filter((p) => !p.isDrafted);
   const smartValues = availableSecondary.map((p) => p.smartRank);
-  const vonaValues = availableSecondary.map((p) => p.vona ?? 0);
-  const valueValues = availableSecondary.map((p) => Math.max(p.adpValueGap ?? 0, 0));
+  const adpValues = availableSecondary
+    .map((p) => p.adp)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const avgValues = availableSecondary.map((p) => p.avgScore2025 ?? p.projScore);
+  const projValues = availableSecondary.map((p) => p.projScore);
 
   const smartMin = smartValues.length > 0 ? Math.min(...smartValues) : 0;
   const smartMax = smartValues.length > 0 ? Math.max(...smartValues) : 100;
-  const vonaMin = vonaValues.length > 0 ? Math.min(...vonaValues) : 0;
-  const vonaMax = vonaValues.length > 0 ? Math.max(...vonaValues) : 100;
-  const valueMin = valueValues.length > 0 ? Math.min(...valueValues) : 0;
-  const valueMax = valueValues.length > 0 ? Math.max(...valueValues) : 100;
+  const adpMin = adpValues.length > 0 ? Math.min(...adpValues) : 1;
+  const adpMax = adpValues.length > 0 ? Math.max(...adpValues) : 200;
+  const avgMin = avgValues.length > 0 ? Math.min(...avgValues) : 0;
+  const avgMax = avgValues.length > 0 ? Math.max(...avgValues) : 100;
+  const projMin = projValues.length > 0 ? Math.min(...projValues) : 0;
+  const projMax = projValues.length > 0 ? Math.max(...projValues) : 100;
 
-  return withSecondary.map((p) => {
+  const scored = withSecondary.map((p) => {
     const smartNorm = normaliseMinMax(p.smartRank, smartMin, smartMax, 50);
-    const vonaNorm = normaliseMinMax(p.vona ?? 0, vonaMin, vonaMax, 0);
-    const valueNorm = normaliseMinMax(Math.max(p.adpValueGap ?? 0, 0), valueMin, valueMax, 0);
+
+    const avgNorm = normaliseMinMax(
+      p.avgScore2025 ?? p.projScore,
+      avgMin,
+      avgMax,
+      50
+    );
+    const projNorm = normaliseMinMax(p.projScore, projMin, projMax, 50);
+    const consistencyNorm = clamp(p.consistencyScore, 0, 100);
+    const adpPriorityNorm =
+      p.adp != null
+        ? 100 - normaliseMinMax(p.adp, adpMin, adpMax, 50)
+        : 40;
+    const scarcityRawNorm = clamp(p.positionalScarcity, 0, 100);
+    const starterNeedScale =
+      remainingStarterNeedByPos[p.bestVorpPosition] / maxStarterNeed;
+    const scarcityNorm = scarcityRawNorm * starterNeedScale;
 
     const pickNowScore = settings.usePickNowScore
-      ? smartNorm +
-        phaseWeights.vona * vonaNorm +
-        phaseWeights.value * valueNorm +
-        phaseWeights.consistency * p.consistencyScore -
-        phaseWeights.riskPenalty * p.riskScore
+      ? wAvg * avgNorm +
+        wProj * projNorm +
+        wConsistency * consistencyNorm +
+        wAdp * adpPriorityNorm +
+        wScarcity * scarcityNorm
       : smartNorm;
 
     return {
@@ -393,6 +524,8 @@ export function calculateVorp(
       draftPhaseAtCalc: draftPhase.phase,
     };
   });
+
+  return scored;
 }
 
 // ──────────────────────────────────────────────
@@ -414,7 +547,6 @@ export function generateRecommendations(
   );
   const scarcity = calculatePositionalScarcity(players, settings);
   const phase = available[0]?.draftPhaseAtCalc ?? "early";
-  const phaseWeights = settings.phaseWeights[phase];
 
   const rankedPool = [...(availableForRecommendations.length > 0 ? availableForRecommendations : available)].sort(
     (a, b) =>
@@ -462,30 +594,15 @@ export function generateRecommendations(
       reasons.push(`Smoky: ${p.smokyNote}`);
     }
 
-    // VONA reason — big gap means "don't skip this player"
-    if (p.vona != null && p.vona > 10) {
-      reasons.push(
-        `Big drop-off: ${p.vona.toFixed(1)} pts better than next ${p.bestVorpPosition} — don't skip`
-      );
+    if (p.avgScore2025 != null) {
+      reasons.push(`Avg25 ${p.avgScore2025.toFixed(1)}`);
     }
-
-    if (phaseWeights.vona > 0 && p.vona != null && p.vona >= 6) {
-      reasons.push(`High VONA pressure (${p.vona.toFixed(1)}) in ${phase.toUpperCase()} phase`);
+    reasons.push(`Projection ${p.projScore.toFixed(1)}`);
+    if (p.consistencyScore >= 80) {
+      reasons.push(`Strong consistency ${p.consistencyScore.toFixed(0)}`);
     }
-
-    // ADP value reason
-    if (p.valueOverAdp != null && p.valueOverAdp > 5) {
-      reasons.push(
-        `Sliding in draft: ADP ${p.adp} but ranked ${p.adp! - p.valueOverAdp} by value`
-      );
-    }
-
-    if (phaseWeights.consistency > 0 && p.games2025 != null && p.consistencyScore >= 85) {
-      reasons.push(`High consistency (${p.games2025} games in 2025)`);
-    }
-
-    if (phaseWeights.riskPenalty > 0 && p.riskScore >= 70) {
-      reasons.push(`Risk penalty active (${p.risk}${p.injury ? `, ${p.injury}` : ""})`);
+    if (p.adp != null && p.adp <= 30) {
+      reasons.push(`Market priority ADP ${p.adp.toFixed(0)}`);
     }
 
     if (p.notes.trim()) {

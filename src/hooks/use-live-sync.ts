@@ -7,11 +7,12 @@
 // so the interval always sees the latest player list.
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useDraftStore } from "@/stores/draft-store";
+import { useDraftStore, type DraftExport } from "@/stores/draft-store";
 import { useUiStore } from "@/stores/ui-store";
 
 const POLL_INTERVAL_MS = 10_000;
 const MAX_RETRIES = 3;
+const LIVE_SYNC_SNAPSHOT_KEY = "afl-live-sync:last-snapshot:v1";
 
 interface SyncPick {
   playerId?: string;
@@ -63,6 +64,26 @@ interface SyncMeta {
   nextUp?: SyncSlotMeta[];
   totalCompletedPicks?: number;
   polledAt?: string;
+}
+
+interface SavedLiveSyncSnapshot {
+  version: 1;
+  savedAt: number;
+  totalPicks: number;
+  leagueName: string | null;
+  draftStatus: string | null;
+  teamNames: string[];
+  sourceUrl: string | null;
+  exportState: DraftExport;
+}
+
+interface SavedLiveSyncSnapshotInfo {
+  exists: boolean;
+  savedAt: number | null;
+  totalPicks: number;
+  leagueName: string | null;
+  draftStatus: string | null;
+  teamNames: string[];
 }
 
 export interface LiveSyncStatus {
@@ -132,14 +153,127 @@ export function useLiveSync() {
   const setCurrentOverallPickRef = useRef(
     useDraftStore.getState().setCurrentOverallPick
   );
+  const exportStateRef = useRef(useDraftStore.getState().exportState);
+  const importStateRef = useRef(useDraftStore.getState().importState);
 
   useEffect(() => {
     const unsub = useDraftStore.subscribe((s) => {
       playersRef.current = s.players;
       draftPlayerRef.current = s.draftPlayer;
       setCurrentOverallPickRef.current = s.setCurrentOverallPick;
+      exportStateRef.current = s.exportState;
+      importStateRef.current = s.importState;
     });
     return unsub;
+  }, []);
+
+  const persistCurrentSnapshot = useCallback(
+    (result: { totalPicks?: number; meta?: SyncMeta }) => {
+      if (typeof window === "undefined") return;
+      try {
+        const snapshot: SavedLiveSyncSnapshot = {
+          version: 1,
+          savedAt: Date.now(),
+          totalPicks: result.totalPicks ?? 0,
+          leagueName: result.meta?.league?.name ?? null,
+          draftStatus: result.meta?.league?.draftStatus ?? null,
+          teamNames:
+            result.meta?.teams && result.meta.teams.length > 0
+              ? result.meta.teams.map((team) => team.name)
+              : [],
+          sourceUrl: result.meta?.sourceUrl ?? null,
+          exportState: exportStateRef.current(),
+        };
+        window.localStorage.setItem(
+          LIVE_SYNC_SNAPSHOT_KEY,
+          JSON.stringify(snapshot)
+        );
+      } catch {
+        // Ignore snapshot persistence issues; live sync should keep running.
+      }
+    },
+    []
+  );
+
+  const readSavedSnapshot = useCallback((): SavedLiveSyncSnapshot | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.localStorage.getItem(LIVE_SYNC_SNAPSHOT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<SavedLiveSyncSnapshot>;
+      if (parsed.version !== 1) return null;
+      if (!parsed.exportState || parsed.exportState.version !== 1) return null;
+      if (typeof parsed.savedAt !== "number") return null;
+
+      return {
+        version: 1,
+        savedAt: parsed.savedAt,
+        totalPicks:
+          typeof parsed.totalPicks === "number" ? parsed.totalPicks : 0,
+        leagueName:
+          typeof parsed.leagueName === "string" ? parsed.leagueName : null,
+        draftStatus:
+          typeof parsed.draftStatus === "string" ? parsed.draftStatus : null,
+        teamNames: Array.isArray(parsed.teamNames)
+          ? parsed.teamNames.filter((name): name is string => typeof name === "string")
+          : [],
+        sourceUrl:
+          typeof parsed.sourceUrl === "string" ? parsed.sourceUrl : null,
+        exportState: parsed.exportState,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const getSavedSnapshotInfo = useCallback((): SavedLiveSyncSnapshotInfo => {
+    const snapshot = readSavedSnapshot();
+    if (!snapshot) {
+      return {
+        exists: false,
+        savedAt: null,
+        totalPicks: 0,
+        leagueName: null,
+        draftStatus: null,
+        teamNames: [],
+      };
+    }
+    return {
+      exists: true,
+      savedAt: snapshot.savedAt,
+      totalPicks: snapshot.totalPicks,
+      leagueName: snapshot.leagueName,
+      draftStatus: snapshot.draftStatus,
+      teamNames: snapshot.teamNames,
+    };
+  }, [readSavedSnapshot]);
+
+  const restoreSavedSnapshot = useCallback(() => {
+    const snapshot = readSavedSnapshot();
+    if (!snapshot) {
+      return { success: false, error: "No saved live-sync snapshot found." };
+    }
+
+    importStateRef.current(snapshot.exportState);
+    setState((s) => ({
+      ...s,
+      status: `Restored saved snapshot — ${snapshot.totalPicks} picks`,
+      statusColor: "yellow",
+      lastSyncTime: snapshot.savedAt,
+      totalSynced: snapshot.totalPicks,
+      leagueName: snapshot.leagueName ?? s.leagueName,
+      draftStatus: snapshot.draftStatus ?? s.draftStatus,
+      teamNames:
+        snapshot.teamNames.length > 0 ? snapshot.teamNames : s.teamNames,
+      sourceUrl: snapshot.sourceUrl ?? s.sourceUrl,
+    }));
+
+    return { success: true, restoredAt: snapshot.savedAt };
+  }, [readSavedSnapshot]);
+
+  const clearSavedSnapshot = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(LIVE_SYNC_SNAPSHOT_KEY);
   }, []);
 
   // Publish live sync state to global UI store for header display.
@@ -159,6 +293,22 @@ export function useLiveSync() {
       nextPollAt: state.nextPollAt,
     });
   }, [state]);
+
+  // Seed disconnected header context from last saved snapshot,
+  // so draft-night state can still be reviewed offline.
+  useEffect(() => {
+    const snapshot = readSavedSnapshot();
+    if (!snapshot) return;
+    setState((s) => ({
+      ...s,
+      totalSynced: s.totalSynced > 0 ? s.totalSynced : snapshot.totalPicks,
+      lastSyncTime: s.lastSyncTime ?? snapshot.savedAt,
+      leagueName: s.leagueName ?? snapshot.leagueName,
+      draftStatus: s.draftStatus ?? snapshot.draftStatus,
+      teamNames: s.teamNames.length > 0 ? s.teamNames : snapshot.teamNames,
+      sourceUrl: s.sourceUrl ?? snapshot.sourceUrl,
+    }));
+  }, [readSavedSnapshot]);
 
   // Map AFL team IDs to 1-6 in the order they first appear
   const getTeamNumber = useCallback((teamId: string | null): number => {
@@ -191,19 +341,57 @@ export function useLiveSync() {
       const draftPlayer = draftPlayerRef.current;
       let newCount = 0;
 
+      const playersById = new Map<string, (typeof players)[number]>();
+      const playersByNameClub = new Map<string, (typeof players)[number][]>();
+      const playersByName = new Map<string, (typeof players)[number][]>();
+
+      for (const player of players) {
+        const idKey = String(player.id).trim();
+        if (idKey) playersById.set(idKey, player);
+
+        const nameKey = normalise(player.name);
+        const clubKey = normalise(player.club);
+        const nameClubKey = `${nameKey}__${clubKey}`;
+
+        const byNameClub = playersByNameClub.get(nameClubKey);
+        if (byNameClub) byNameClub.push(player);
+        else playersByNameClub.set(nameClubKey, [player]);
+
+        const byName = playersByName.get(nameKey);
+        if (byName) byName.push(player);
+        else playersByName.set(nameKey, [player]);
+      }
+
       for (const pick of picks) {
+        const pickPlayerId = String(pick.playerId ?? "").trim();
+        const pickName = normalise(pick.name);
+        const pickClub = normalise(pick.club);
+
         const pickKey =
-          (pick.playerId && pick.playerId.length > 0
-            ? pick.playerId
-            : `${normalise(pick.name)}_${normalise(pick.club)}`) +
+          (pickPlayerId.length > 0
+            ? pickPlayerId
+            : `${pickName}_${pickClub}`) +
           `_${pick.overallPick}`;
         if (processedRef.current.has(pickKey)) continue;
 
-        const match = players.find(
-          (p) =>
-            normalise(p.name) === normalise(pick.name) &&
-            normalise(p.club) === normalise(pick.club)
-        );
+        let match: (typeof players)[number] | undefined;
+
+        // Primary match: AFL player id against CSV id/player_id.
+        if (pickPlayerId) {
+          match = playersById.get(pickPlayerId);
+        }
+
+        // Fallback 1: name + club exact (normalised), if unique.
+        if (!match && pickName && pickClub) {
+          const byNameClub = playersByNameClub.get(`${pickName}__${pickClub}`);
+          if (byNameClub?.length === 1) match = byNameClub[0];
+        }
+
+        // Fallback 2: name only, if unique.
+        if (!match && pickName) {
+          const byName = playersByName.get(pickName);
+          if (byName?.length === 1) match = byName[0];
+        }
 
         if (match && !match.isDrafted) {
           const teamId = pick.teamId ?? null;
@@ -332,8 +520,9 @@ export function useLiveSync() {
         sourceUrl: result.meta?.sourceUrl || s.sourceUrl,
         nextPollAt: s.nextPollAt,
       }));
+      persistCurrentSnapshot(result);
     },
-    []
+    [persistCurrentSnapshot]
   );
 
   const startPolling = useCallback(
@@ -457,5 +646,8 @@ export function useLiveSync() {
     stopPolling,
     testConnection,
     checkBookmarklet,
+    getSavedSnapshotInfo,
+    restoreSavedSnapshot,
+    clearSavedSnapshot,
   };
 }

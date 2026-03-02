@@ -150,6 +150,8 @@ export function parseCsv(input: string): {
   const colVariance = findColumn(headers, CSV_COLUMN_MAPPING.variance);
   const colAvgScore2025 = findColumns(headers, CSV_COLUMN_MAPPING.avgScore2025);
   const colMaxScore2025 = findColumns(headers, CSV_COLUMN_MAPPING.maxScore2025);
+  const colX100_2025 = findColumns(headers, CSV_COLUMN_MAPPING.x100_2025);
+  const colX120_2025 = findColumns(headers, CSV_COLUMN_MAPPING.x120_2025);
 
   // Validate required columns
   if (!colName) errors.push('Required column missing: "name"');
@@ -204,6 +206,8 @@ export function parseCsv(input: string): {
     const variance = colVariance ? parseFloat(row[colVariance]) : NaN;
     const avgScore2025 = parseFirstNumeric(row, colAvgScore2025);
     const maxScore2025 = parseFirstNumeric(row, colMaxScore2025);
+    const x100_2025 = parseFirstNumeric(row, colX100_2025);
+    const x120_2025 = parseFirstNumeric(row, colX120_2025);
 
     players.push({
       id,
@@ -229,6 +233,8 @@ export function parseCsv(input: string): {
       variance: isNaN(variance) ? null : variance,
       avgScore2025: isNaN(avgScore2025) ? null : avgScore2025,
       maxScore2025: isNaN(maxScore2025) ? null : maxScore2025,
+      x100_2025: isNaN(x100_2025) ? null : Math.round(x100_2025),
+      x120_2025: isNaN(x120_2025) ? null : Math.round(x120_2025),
       isDrafted: false,
       draftedBy: null,
       draftOrder: null,

@@ -7,6 +7,7 @@ import type {
   CsvColumnMapping,
   PhaseBoundaries,
   PhaseWeights,
+  PickNowWeights,
 } from "@/types";
 
 // ──────────────────────────────────────────────
@@ -47,22 +48,30 @@ export const DEFAULT_PHASE_BOUNDARIES: PhaseBoundaries = {
 export const DEFAULT_PHASE_WEIGHTS: PhaseWeights = {
   early: {
     vona: 0.35,
-    value: 0.15,
-    consistency: 0.25,
-    riskPenalty: 0.3,
+    value: 0.18,
+    consistency: 0.28,
+    riskPenalty: 0.22,
   },
   mid: {
     vona: 0.3,
-    value: 0.25,
-    consistency: 0.2,
-    riskPenalty: 0.25,
+    value: 0.24,
+    consistency: 0.22,
+    riskPenalty: 0.2,
   },
   late: {
     vona: 0.2,
-    value: 0.35,
-    consistency: 0.15,
-    riskPenalty: 0.2,
+    value: 0.28,
+    consistency: 0.2,
+    riskPenalty: 0.16,
   },
+};
+
+export const DEFAULT_PICK_NOW_WEIGHTS: PickNowWeights = {
+  avg25: 0.25,
+  projection: 0.4,
+  consistency: 0.12,
+  adp: 0.13,
+  scarcity: 0.1,
 };
 
 export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
@@ -75,6 +84,7 @@ export const DEFAULT_LEAGUE_SETTINGS: LeagueSettings = {
   smartRankWeights: DEFAULT_SMART_RANK_WEIGHTS,
   phaseBoundaries: DEFAULT_PHASE_BOUNDARIES,
   phaseWeights: DEFAULT_PHASE_WEIGHTS,
+  pickNowWeights: DEFAULT_PICK_NOW_WEIGHTS,
   usePickNowScore: true,
 };
 
@@ -122,6 +132,8 @@ export const CSV_COLUMN_MAPPING: CsvColumnMapping = {
     "avg25",
   ],
   maxScore2025: ["ultimate_max_2025", "max_2025", "max_score"],
+  x100_2025: ["ultimate_x100_2025", "x100_2025", "x100", "afl_2025_100_plus"],
+  x120_2025: ["ultimate_x120_2025", "x120_2025", "x120", "afl_2025_120_plus"],
 };
 
 // ──────────────────────────────────────────────

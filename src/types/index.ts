@@ -46,6 +46,8 @@ export interface Player {
   variance: number | null; // Projection variance (ceiling/floor spread)
   avgScore2025: number | null; // Last-season average (2025)
   maxScore2025: number | null; // Best single-game score in 2025
+  x100_2025: number | null; // 100+ score count in 2025
+  x120_2025: number | null; // 120+ score count in 2025
   isDrafted: boolean;
   draftedBy: number | null; // Team number (1–6), null = undrafted
   draftOrder: number | null; // Overall pick number
@@ -66,7 +68,7 @@ export interface PlayerWithMetrics extends Player {
   // VONA: gap between this player and the next-best available at their position
   vona: number | null;
   pickNowScore: number;
-  consistencyScore: number; // 0-100 reliability from games played
+  consistencyScore: number; // 0-100 reliability from games + x100/x120 profile
   riskScore: number; // 0-100 availability/risk penalty input
   draftPhaseAtCalc: DraftPhase;
 }
@@ -85,6 +87,14 @@ export interface PhaseWeightVector {
 
 export type PhaseWeights = Record<DraftPhase, PhaseWeightVector>;
 
+export interface PickNowWeights {
+  avg25: number;
+  projection: number;
+  consistency: number;
+  adp: number;
+  scarcity: number;
+}
+
 // ──────────────────────────────────────────────
 // League settings
 // ──────────────────────────────────────────────
@@ -101,6 +111,7 @@ export interface LeagueSettings {
   smartRankWeights: SmartRankWeights; // Configurable composite weights
   phaseBoundaries: PhaseBoundaries; // Hybrid progress boundaries
   phaseWeights: PhaseWeights; // Per-phase Pick-Now weights
+  pickNowWeights: PickNowWeights; // User-tunable Pick-Now factor weights
   usePickNowScore: boolean; // Toggle dynamic Pick-Now scoring
 }
 
@@ -235,4 +246,6 @@ export interface CsvColumnMapping {
   variance: string[];
   avgScore2025: string[];
   maxScore2025: string[];
+  x100_2025: string[];
+  x120_2025: string[];
 }

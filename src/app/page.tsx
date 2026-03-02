@@ -15,7 +15,7 @@ import clsx from "clsx";
 import { useDraftStore } from "@/stores/draft-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useUiStore, type Tab } from "@/stores/ui-store";
-import { calculateVorp } from "@/lib/vorp";
+import { calculateVorp, detectPositionRuns } from "@/lib/vorp";
 
 import { CsvUpload } from "@/components/csv-upload";
 import { DraftBoard } from "@/components/draft-board";
@@ -83,6 +83,15 @@ export default function Home() {
     if (!liveSyncSnapshot.isActive || !liveSyncSnapshot.nextPollAt) return null;
     return Math.max(0, Math.ceil((liveSyncSnapshot.nextPollAt - nowTs) / 1000));
   }, [liveSyncSnapshot.isActive, liveSyncSnapshot.nextPollAt, nowTs]);
+  const positionRunSummary = useMemo(() => {
+    const alerts = detectPositionRuns(draftPicks, playersWithMetrics);
+    if (alerts.length === 0) return null;
+    const top = alerts[0];
+    return {
+      short: `${top.position} ${top.count}/${top.windowSize}`,
+      message: top.message,
+    };
+  }, [draftPicks, playersWithMetrics]);
 
   const modalPlayer = draftModalPlayerId
     ? playersWithMetrics.find((p) => p.id === draftModalPlayerId)
@@ -171,6 +180,15 @@ export default function Home() {
               #{currentOverallPick}
             </strong>
           </span>
+          {positionRunSummary && (
+            <span
+              title={positionRunSummary.message}
+              className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Run {positionRunSummary.short}
+            </span>
+          )}
           <span className="h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
           <span className="inline-flex items-center gap-1.5">
             <span

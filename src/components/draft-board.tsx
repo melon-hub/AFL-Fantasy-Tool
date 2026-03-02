@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -12,7 +12,14 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { ArrowUpDown, Columns3, Eye, EyeOff, GripVertical, Search } from "lucide-react";
+import {
+  ArrowUpDown,
+  Columns3,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Search,
+} from "lucide-react";
 import clsx from "clsx";
 import type { DraftPhase, LeagueSettings, PlayerWithMetrics, Position } from "@/types";
 import { CATEGORY_COLORS, POSITION_COLORS } from "@/lib/constants";
@@ -29,6 +36,7 @@ const POS_FILTERS: { label: string; value: PositionFilter }[] = [
 
 const DEFAULT_COLUMN_ORDER: ColumnOrderState = [
   "rank",
+  "shortlistRank",
   "name",
   "positionString",
   "avgScore2025",
@@ -53,6 +61,7 @@ const DEFAULT_COLUMN_ORDER: ColumnOrderState = [
 
 const DEFAULT_VISIBLE_COLUMNS = new Set([
   "rank",
+  "shortlistRank",
   "name",
   "positionString",
   "avgScore2025",
@@ -70,6 +79,7 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = Object.fromEntries(
 
 const COLUMN_LABELS: Record<string, string> = {
   rank: "#",
+  shortlistRank: "SL#",
   name: "Player",
   positionString: "Pos",
   projScore: "Proj",
@@ -94,6 +104,10 @@ const COLUMN_LABELS: Record<string, string> = {
 
 const COLUMN_ORDER_STORAGE_KEY = "afl:draft-board:column-order:v2";
 const COLUMN_VISIBILITY_STORAGE_KEY = "afl:draft-board:column-visibility:v2";
+const SHORTLIST_STORAGE_KEY = "afl:draft-board:shortlist:v1";
+const SHORTLIST_ORDER_STORAGE_KEY = "afl:draft-board:shortlist-order:v1";
+const SHORTLIST_ONLY_STORAGE_KEY = "afl:draft-board:shortlist-only:v1";
+const SHORTLIST_SORT_MODE_STORAGE_KEY = "afl:draft-board:shortlist-sort-mode:v1";
 const NON_DRAGGABLE_COLUMNS = new Set(["action"]);
 const NON_TOGGLEABLE_COLUMNS = new Set<string>();
 
@@ -211,6 +225,8 @@ interface DraftBoardProps {
   onDraftClick: (playerId: string) => void;
 }
 
+type ShortlistSortMode = "pickNow" | "custom";
+
 export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps) {
   const {
     positionFilter,
@@ -232,7 +248,21 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
   );
   const [isColumnsMenuOpen, setIsColumnsMenuOpen] = useState(false);
   const [draggingColumnId, setDraggingColumnId] = useState<string | null>(null);
+  const [shortlistIds, setShortlistIds] = useState<Set<string>>(new Set());
+  const [shortlistOrder, setShortlistOrder] = useState<string[]>([]);
+  const [showShortlistOnly, setShowShortlistOnly] = useState(false);
+  const [shortlistSortMode, setShortlistSortMode] = useState<ShortlistSortMode>(
+    "pickNow"
+  );
+  const [shortlistPrefsHydrated, setShortlistPrefsHydrated] = useState(false);
+  const [draggingShortlistId, setDraggingShortlistId] = useState<string | null>(
+    null
+  );
+  const [shortlistDropTargetId, setShortlistDropTargetId] = useState<
+    string | null
+  >(null);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
+  const isCustomShortlistMode = showShortlistOnly && shortlistSortMode === "custom";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -267,6 +297,97 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
   }, [columnVisibility]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawShortlist = window.localStorage.getItem(SHORTLIST_STORAGE_KEY);
+      const parsedShortlist = rawShortlist ? JSON.parse(rawShortlist) : [];
+      const shortlistArray = Array.isArray(parsedShortlist)
+        ? parsedShortlist.filter((id): id is string => typeof id === "string")
+        : [];
+      setShortlistIds(new Set(shortlistArray));
+
+      const rawOrder = window.localStorage.getItem(SHORTLIST_ORDER_STORAGE_KEY);
+      const parsedOrder = rawOrder ? JSON.parse(rawOrder) : [];
+      const storedOrder = Array.isArray(parsedOrder)
+        ? parsedOrder.filter((id): id is string => typeof id === "string")
+        : [];
+      const orderSet = new Set(storedOrder);
+      const mergedOrder = [
+        ...storedOrder.filter((id) => shortlistArray.includes(id)),
+        ...shortlistArray.filter((id) => !orderSet.has(id)),
+      ];
+      setShortlistOrder(mergedOrder);
+    } catch {
+      setShortlistIds(new Set());
+      setShortlistOrder([]);
+    }
+
+    try {
+      const rawShortlistOnly = window.localStorage.getItem(SHORTLIST_ONLY_STORAGE_KEY);
+      setShowShortlistOnly(rawShortlistOnly === "1");
+    } catch {
+      setShowShortlistOnly(false);
+    }
+
+    try {
+      const rawSortMode = window.localStorage.getItem(
+        SHORTLIST_SORT_MODE_STORAGE_KEY
+      );
+      setShortlistSortMode(rawSortMode === "custom" ? "custom" : "pickNow");
+    } catch {
+      setShortlistSortMode("pickNow");
+    }
+    setShortlistPrefsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!shortlistPrefsHydrated) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      SHORTLIST_STORAGE_KEY,
+      JSON.stringify(Array.from(shortlistIds))
+    );
+  }, [shortlistIds, shortlistPrefsHydrated]);
+
+  useEffect(() => {
+    if (!shortlistPrefsHydrated) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      SHORTLIST_ORDER_STORAGE_KEY,
+      JSON.stringify(shortlistOrder)
+    );
+  }, [shortlistOrder, shortlistPrefsHydrated]);
+
+  useEffect(() => {
+    if (!shortlistPrefsHydrated) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SHORTLIST_ONLY_STORAGE_KEY, showShortlistOnly ? "1" : "0");
+  }, [showShortlistOnly, shortlistPrefsHydrated]);
+
+  useEffect(() => {
+    if (!shortlistPrefsHydrated) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      SHORTLIST_SORT_MODE_STORAGE_KEY,
+      shortlistSortMode
+    );
+  }, [shortlistSortMode, shortlistPrefsHydrated]);
+
+  // Prune shortlist entries that are no longer present after CSV reloads.
+  useEffect(() => {
+    const validIds = new Set(players.map((p) => p.id));
+    setShortlistIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (validIds.has(id)) next.add(id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+    setShortlistOrder((prev) => prev.filter((id) => validIds.has(id)));
+  }, [players]);
+
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (!columnsMenuRef.current) return;
       if (!columnsMenuRef.current.contains(event.target as Node)) {
@@ -279,6 +400,10 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
   }, []);
 
   useEffect(() => {
+    if (isCustomShortlistMode) {
+      setSorting([{ id: "shortlistRank", desc: false }]);
+      return;
+    }
     const id =
       sortMode === "pickNow"
         ? "pickNowScore"
@@ -286,7 +411,18 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           ? "smartRank"
           : "finalValue";
     setSorting([{ id, desc: true }]);
-  }, [sortMode]);
+  }, [sortMode, isCustomShortlistMode]);
+
+  useEffect(() => {
+    if (!showShortlistOnly) return;
+    setColumnVisibility((prev) => ({ ...prev, shortlistRank: true }));
+  }, [showShortlistOnly]);
+
+  useEffect(() => {
+    if (isCustomShortlistMode) return;
+    setDraggingShortlistId(null);
+    setShortlistDropTargetId(null);
+  }, [isCustomShortlistMode]);
 
   const maxVorp = useMemo(
     () => Math.max(...players.filter((p) => !p.isDrafted).map((p) => p.finalValue), 1),
@@ -298,37 +434,38 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
     [players]
   );
   const activePhase = availablePlayers[0]?.draftPhaseAtCalc ?? "early";
-  const phaseWeights = settings.phaseWeights[activePhase];
   const smartWeights = settings.smartRankWeights;
 
   const normByPlayerId = useMemo(() => {
     const smartValues = availablePlayers.map((p) => p.smartRank);
-    const vonaValues = availablePlayers.map((p) => p.vona ?? 0);
-    const valueValues = availablePlayers.map((p) => Math.max(p.adpValueGap ?? 0, 0));
 
     const smartMin = smartValues.length > 0 ? Math.min(...smartValues) : 0;
     const smartMax = smartValues.length > 0 ? Math.max(...smartValues) : 100;
-    const vonaMin = vonaValues.length > 0 ? Math.min(...vonaValues) : 0;
-    const vonaMax = vonaValues.length > 0 ? Math.max(...vonaValues) : 100;
-    const valueMin = valueValues.length > 0 ? Math.min(...valueValues) : 0;
-    const valueMax = valueValues.length > 0 ? Math.max(...valueValues) : 100;
 
-    const map = new Map<string, { smartNorm: number; vonaNorm: number; valueNorm: number }>();
+    const map = new Map<string, { smartNorm: number }>();
     for (const p of players) {
       map.set(p.id, {
         smartNorm: normaliseMinMax(p.smartRank, smartMin, smartMax, 50),
-        vonaNorm: normaliseMinMax(p.vona ?? 0, vonaMin, vonaMax, 0),
-        valueNorm: normaliseMinMax(Math.max(p.adpValueGap ?? 0, 0), valueMin, valueMax, 0),
       });
     }
     return map;
   }, [availablePlayers, players]);
 
+  const shortlistRankById = useMemo(() => {
+    const map = new Map<string, number>();
+    shortlistOrder.forEach((id, idx) => map.set(id, idx + 1));
+    return map;
+  }, [shortlistOrder]);
+
   const filteredPlayers = useMemo(() => {
     let list = players;
 
-    if (!showDrafted) {
+    if (!showDrafted && !showShortlistOnly) {
       list = list.filter((p) => !p.isDrafted);
+    }
+
+    if (showShortlistOnly) {
+      list = list.filter((p) => shortlistIds.has(p.id));
     }
 
     if (positionFilter !== "ALL") {
@@ -349,10 +486,73 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       );
     }
 
-    return list;
-  }, [players, showDrafted, positionFilter, searchQuery]);
+    if (isCustomShortlistMode) {
+      const fallbackRank = shortlistOrder.length + 9999;
+      list = [...list].sort(
+        (a, b) =>
+          (shortlistRankById.get(a.id) ?? fallbackRank) -
+          (shortlistRankById.get(b.id) ?? fallbackRank)
+      );
+    }
 
-  const phaseSummary = `Phase ${phaseLabel(activePhase)}\nVONA ${phaseWeights.vona.toFixed(2)} | Value ${phaseWeights.value.toFixed(2)} | Cons ${phaseWeights.consistency.toFixed(2)} | Risk Penalty ${phaseWeights.riskPenalty.toFixed(2)}`;
+    return list;
+  }, [
+    players,
+    showDrafted,
+    showShortlistOnly,
+    isCustomShortlistMode,
+    positionFilter,
+    searchQuery,
+    shortlistIds,
+    shortlistOrder,
+    shortlistRankById,
+  ]);
+
+  const shortlistedCount = useMemo(
+    () => players.filter((p) => shortlistIds.has(p.id)).length,
+    [players, shortlistIds]
+  );
+
+  const toggleShortlist = (playerId: string) => {
+    setShortlistIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(playerId)) next.delete(playerId);
+      else next.add(playerId);
+      return next;
+    });
+    setShortlistOrder((prev) => {
+      if (prev.includes(playerId)) {
+        return prev.filter((id) => id !== playerId);
+      }
+      return [...prev, playerId];
+    });
+  };
+
+  const moveShortlistBefore = useCallback((sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    setShortlistOrder((prev) => {
+      const sourceIndex = prev.indexOf(sourceId);
+      const targetIndex = prev.indexOf(targetId);
+      if (sourceIndex === -1 || targetIndex === -1) return prev;
+
+      const next = [...prev];
+      next.splice(sourceIndex, 1);
+      const insertIndex = next.indexOf(targetId);
+      if (insertIndex === -1) return prev;
+      next.splice(insertIndex, 0, sourceId);
+      return next;
+    });
+  }, []);
+
+  const pickNow = settings.pickNowWeights;
+  const pickNowTotal =
+    pickNow.avg25 +
+    pickNow.projection +
+    pickNow.consistency +
+    pickNow.adp +
+    pickNow.scarcity;
+  const pickNowSafeTotal = pickNowTotal > 0 ? pickNowTotal : 1;
+  const phaseSummary = `Pick-Now factors (normalised)\nAvg25 ${(pickNow.avg25 / pickNowSafeTotal * 100).toFixed(0)}% | Projection ${(pickNow.projection / pickNowSafeTotal * 100).toFixed(0)}% | Consistency ${(pickNow.consistency / pickNowSafeTotal * 100).toFixed(0)}% | ADP ${(pickNow.adp / pickNowSafeTotal * 100).toFixed(0)}% | Scarcity ${(pickNow.scarcity / pickNowSafeTotal * 100).toFixed(0)}%`;
   const smartSummary = `Smart weights\nVORP ${smartWeights.vorpWeight.toFixed(2)} | Scarcity ${smartWeights.scarcityWeight.toFixed(2)} | Bye ${smartWeights.byeWeight.toFixed(2)}`;
 
   const moveColumn = (sourceId: string, targetId: string) => {
@@ -392,16 +592,70 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         enableHiding: false,
       },
       {
+        id: "shortlistRank",
+        accessorFn: (row) =>
+          shortlistRankById.get(row.id) ?? Number.MAX_SAFE_INTEGER,
+        header: () => (
+          <span title="Your manual shortlist rank. Right-click row to shortlist.">
+            SL#
+          </span>
+        ),
+        size: 84,
+        cell: ({ row }) => {
+          const playerId = row.original.id;
+          const rank = shortlistRankById.get(playerId);
+          if (rank == null) return <span className="text-zinc-400">-</span>;
+
+          if (!isCustomShortlistMode) {
+            return <span className="font-mono text-sm">{rank}</span>;
+          }
+
+          return (
+            <div className="flex items-center gap-1">
+              <span className="w-5 text-center font-mono text-xs">{rank}</span>
+              <span
+                draggable
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  e.dataTransfer.setData("text/shortlist-id", playerId);
+                  e.dataTransfer.effectAllowed = "move";
+                  setDraggingShortlistId(playerId);
+                  setShortlistDropTargetId(playerId);
+                }}
+                onDragEnd={(e) => {
+                  e.stopPropagation();
+                  setDraggingShortlistId(null);
+                  setShortlistDropTargetId(null);
+                }}
+                className="cursor-grab rounded border border-zinc-300 px-1 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                title="Drag to reorder shortlist"
+              >
+                <GripVertical className="h-3 w-3" />
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "name",
         header: "Player",
         size: 205,
         cell: ({ row }) => {
           const p = row.original;
+          const shortlisted = shortlistIds.has(p.id);
           const issue = getAvailabilityIssue(p);
           const displayName = shortPlayerName(p.name);
           return (
             <div className="flex items-center gap-1.5">
               <span className="flex min-w-0 items-center gap-1">
+                {shortlisted && (
+                  <span
+                    className="shrink-0 text-xs leading-none text-amber-500"
+                    title="Shortlisted"
+                  >
+                    ★
+                  </span>
+                )}
                 <span
                   className={clsx(
                     "truncate text-sm font-medium",
@@ -459,7 +713,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         accessorKey: "pickNowScore",
         header: () => (
           <span
-            title={`Pick-Now score (single recommendation metric).\nSmartNorm + weighted VONA + weighted Value + weighted Consistency - weighted Risk\n${phaseSummary}`}
+            title={`Pick-Now score (single recommendation metric).\n${phaseSummary}`}
           >
             Pick now
           </span>
@@ -470,11 +724,12 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           const n = normByPlayerId.get(p.id);
           const title =
             `Pick-Now ${p.pickNowScore.toFixed(1)}\n` +
+            `Avg25: ${(p.avgScore2025 ?? p.projScore).toFixed(1)}\n` +
+            `Projection: ${p.projScore.toFixed(1)}\n` +
+            `Consistency: ${p.consistencyScore.toFixed(1)}\n` +
+            `ADP: ${p.adp != null ? p.adp.toFixed(1) : "n/a"}\n` +
+            `Scarcity (team-need adjusted): ${p.positionalScarcity.toFixed(1)}\n` +
             `SmartNorm: ${(n?.smartNorm ?? 0).toFixed(1)}\n` +
-            `VONA Norm: ${(n?.vonaNorm ?? 0).toFixed(1)} x ${phaseWeights.vona.toFixed(2)}\n` +
-            `Value Norm: ${(n?.valueNorm ?? 0).toFixed(1)} x ${phaseWeights.value.toFixed(2)}\n` +
-            `Consistency: ${p.consistencyScore.toFixed(1)} x ${phaseWeights.consistency.toFixed(2)}\n` +
-            `Risk: ${p.riskScore.toFixed(1)} x ${phaseWeights.riskPenalty.toFixed(2)}\n` +
             phaseSummary;
           return (
             <span className="font-mono text-sm font-semibold text-blue-600 dark:text-blue-300" title={title}>
@@ -506,7 +761,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "finalValue",
         header: () => (
-          <span title={`Value = best-position VORP + DPP bonus.\n${phaseSummary}`}>Value</span>
+          <span title={`Value = best-position VORP + DPP + form/durability adjustments.`}>Value</span>
         ),
         size: 72,
         cell: ({ row }) => (
@@ -515,7 +770,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
               "rounded px-1 font-mono text-sm font-semibold",
               vorpHeatColor(row.original.finalValue, maxVorp)
             )}
-            title={`VORP ${row.original.vorp.toFixed(1)} + DPP ${row.original.dppBonus.toFixed(1)} = ${row.original.finalValue.toFixed(1)}`}
+            title={`Final value score ${row.original.finalValue.toFixed(1)} (VORP + DPP + form/durability)`}
           >
             {row.original.finalValue.toFixed(1)}
           </span>
@@ -541,7 +796,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "vona",
         header: () => (
-          <span title={`VONA = gap to the next-best available player at this position.\nHigher means bigger cliff if you pass.\n${phaseSummary}`}>
+          <span title={`VONA = gap to the next-best available player at this position.\nContext metric only (not a direct Pick-Now factor).`}>
             VONA
           </span>
         ),
@@ -555,7 +810,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                 "font-mono text-sm",
                 v > 10 && "font-bold text-red-600 dark:text-red-400"
               )}
-              title={`VONA ${v.toFixed(1)}\nWeighted in ${phaseLabel(activePhase)} phase by ${phaseWeights.vona.toFixed(2)}`}
+              title={`VONA ${v.toFixed(1)}\nContext metric (not directly weighted in Pick-Now).`}
             >
               {v.toFixed(1)}
             </span>
@@ -598,7 +853,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "risk",
         header: () => (
-          <span title={`Risk and injury availability signal.\nUsed as penalty in Pick-Now.\n${phaseSummary}`}>
+          <span title={`Risk and injury availability signal.\nShown for context.`}>
             Risk
           </span>
         ),
@@ -617,7 +872,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                 label === "Medium" && "text-yellow-600 dark:text-yellow-400",
                 label === "Low" && "text-green-600 dark:text-green-400"
               )}
-              title={`Risk score ${row.original.riskScore.toFixed(1)}\nPenalty weight ${phaseWeights.riskPenalty.toFixed(2)}${hasInjury ? `\nInjury: ${injury}` : ""}`}
+              title={`Risk score ${row.original.riskScore.toFixed(1)}${hasInjury ? `\nInjury: ${injury}` : ""}`}
             >
               {label}
               {hasInjury && " ⚠"}
@@ -628,7 +883,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "games2025",
         header: () => (
-          <span title={`Games played in 2025.\nUsed as soft consistency factor.\nMissing values are neutral (~60).`}>
+          <span title={`Games played in 2025.\nUsed in consistency with x100/x120 (when available).\nMissing values are neutral (~60).`}>
             Gms25
           </span>
         ),
@@ -636,7 +891,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         cell: ({ row }) => (
           <span
             className="font-mono text-sm"
-            title={`Games 2025: ${row.original.games2025 ?? "N/A"}\nConsistency score ${row.original.consistencyScore.toFixed(1)}\nWeight ${phaseWeights.consistency.toFixed(2)}`}
+            title={`Games 2025: ${row.original.games2025 ?? "N/A"}\nConsistency score ${row.original.consistencyScore.toFixed(1)}`}
           >
             {row.original.games2025 ?? "-"}
           </span>
@@ -658,7 +913,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       {
         accessorKey: "consistencyScore",
         header: () => (
-          <span title={`Consistency score derived from games played in 2025 (soft factor).`}>Cons</span>
+          <span title={`Consistency score from games played + premium score rates (x100/x120 when available).`}>Cons</span>
         ),
         size: 64,
         cell: ({ getValue }) => {
@@ -701,17 +956,17 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
         },
       },
       {
-        accessorKey: "adpValueGap",
+        id: "adpValueGap",
+        accessorFn: (row) => row.valueOverAdp,
         header: () => (
-          <span title={`Gap = ADP - value rank proxy.\nPositive = value/steal; negative = reach.\n${phaseSummary}`}>
+          <span title={`Gap = ADP - live value rank.\nPositive = value/steal; negative = reach.`}>
             Gap
           </span>
         ),
         size: 58,
-        cell: ({ row, getValue }) => {
+        cell: ({ getValue }) => {
           const v = getValue() as number | null;
           if (v == null) return <span className="text-zinc-400">-</span>;
-          const n = normByPlayerId.get(row.original.id);
           return (
             <span
               className={clsx(
@@ -719,7 +974,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                 v > 5 && "text-green-600 dark:text-green-400",
                 v < -5 && "text-red-500 dark:text-red-400"
               )}
-              title={`${v > 0 ? "Steal signal" : v < 0 ? "Reach signal" : "Fair value"}\nValueNorm ${(n?.valueNorm ?? 0).toFixed(1)} x ${phaseWeights.value.toFixed(2)}`}
+              title={v > 0 ? "Steal signal" : v < 0 ? "Reach signal" : "Fair value"}
             >
               {v > 0 ? "+" : ""}{v.toFixed(0)}
             </span>
@@ -746,7 +1001,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           if (!note.trim()) return <span className="text-zinc-400">-</span>;
           const text = note.length > 48 ? `${note.slice(0, 48)}...` : note;
           return (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400" title={note}>
+            <span className="line-clamp-1 block text-xs leading-5 text-zinc-500 dark:text-zinc-400" title={note}>
               {text}
             </span>
           );
@@ -782,15 +1037,13 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       },
     ],
     [
-      activePhase,
+      shortlistIds,
+      shortlistRankById,
+      isCustomShortlistMode,
       maxVorp,
       normByPlayerId,
       onDraftClick,
       phaseSummary,
-      phaseWeights.consistency,
-      phaseWeights.riskPenalty,
-      phaseWeights.value,
-      phaseWeights.vona,
       smartSummary,
     ]
   );
@@ -865,6 +1118,38 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
           {showDrafted ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
           {showDrafted ? "Showing drafted" : "Hiding drafted"}
         </button>
+
+        <button
+          onClick={() => setShowShortlistOnly((v) => !v)}
+          className={clsx(
+            "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+            showShortlistOnly
+              ? "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          )}
+          title="Show only shortlisted players (includes drafted so you can track if they are gone)"
+        >
+          Shortlist {shortlistedCount > 0 ? `(${shortlistedCount})` : ""}
+        </button>
+
+        {showShortlistOnly && (
+          <button
+            onClick={() =>
+              setShortlistSortMode((m) => (m === "custom" ? "pickNow" : "custom"))
+            }
+            className={clsx(
+              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              shortlistSortMode === "custom"
+                ? "border-blue-300 bg-blue-100 text-blue-800 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            )}
+            title="Toggle shortlist ordering between your manual rank and Pick-Now score"
+          >
+            {shortlistSortMode === "custom"
+              ? "Shortlist order: Custom"
+              : "Shortlist order: Pick-Now"}
+          </button>
+        )}
 
         <div className="relative" ref={columnsMenuRef}>
           <button
@@ -990,6 +1275,12 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                     row.original.isDrafted
                       ? "bg-zinc-50/50 opacity-50 dark:bg-zinc-900/30"
                       : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40",
+                    shortlistIds.has(row.original.id) &&
+                      "bg-amber-50/40 dark:bg-amber-900/10",
+                    isCustomShortlistMode &&
+                      shortlistDropTargetId === row.original.id &&
+                      draggingShortlistId !== row.original.id &&
+                      "bg-blue-50/50 dark:bg-blue-900/20",
                     row.original.category === "smoky" &&
                       !row.original.isDrafted &&
                       "border-l-2 border-l-orange-400"
@@ -997,10 +1288,38 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
                   onClick={() => {
                     if (!row.original.isDrafted) onDraftClick(row.original.id);
                   }}
-                  title={row.original.isDrafted ? undefined : "Click row to draft"}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleShortlist(row.original.id);
+                  }}
+                  onDragOver={(e) => {
+                    if (!isCustomShortlistMode || !draggingShortlistId) return;
+                    e.preventDefault();
+                    if (shortlistDropTargetId !== row.original.id) {
+                      setShortlistDropTargetId(row.original.id);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    if (!isCustomShortlistMode) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const sourceId =
+                      e.dataTransfer.getData("text/shortlist-id") || draggingShortlistId;
+                    if (sourceId) moveShortlistBefore(sourceId, row.original.id);
+                    setDraggingShortlistId(null);
+                    setShortlistDropTargetId(null);
+                  }}
+                  title={
+                    row.original.isDrafted
+                      ? "Right-click to add/remove shortlist"
+                      : isCustomShortlistMode
+                        ? "Click row to draft. Right-click to add/remove shortlist. Drag SL# handle to reorder."
+                        : "Click row to draft. Right-click to add/remove shortlist."
+                  }
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-2 py-1.5">
+                    <td key={cell.id} className="h-9 px-2 py-1 align-middle">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}

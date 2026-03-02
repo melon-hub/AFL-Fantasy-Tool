@@ -13,7 +13,6 @@ import {
   FlaskConical,
 } from "lucide-react";
 import clsx from "clsx";
-import type { DraftPhase } from "@/types";
 import { POSITIONS } from "@/lib/constants";
 import { parseCsv, readFileAsText } from "@/lib/csv-parser";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -21,21 +20,17 @@ import { useDraftStore, type DraftExport } from "@/stores/draft-store";
 import { useUiStore } from "@/stores/ui-store";
 import { useLiveSync } from "@/hooks/use-live-sync";
 
-// Bookmarklet source — reads X-SID + league ID from the AFL Fantasy page
-// and POSTs them to your local draft tool.
-const BOOKMARKLET_CODE = `javascript:(function(){var c=document.cookie.split(';'),x='',keys={'x-sid':1,'x_sid':1,'xsid':1};for(var i=0;i<c.length;i++){var t=c[i].trim(),eq=t.indexOf('=');if(eq<=0)continue;var k=t.slice(0,eq).trim().toLowerCase();if(keys[k]){x=decodeURIComponent(t.slice(eq+1));break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!l){alert('Open your AFL Fantasy draft page first');return}if(!x){x=window.prompt('Could not auto-read X-SID. Paste it from DevTools > Application > Cookies > fantasy.afl.com.au', '')||''}if(!x){alert('X-SID is required');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
-
 // Console helper: paste into DevTools Console on the AFL draft page.
-const CONSOLE_CONNECT_CODE = `(function(){var c=document.cookie.split(';'),x='',keys={'x-sid':1,'x_sid':1,'xsid':1};for(var i=0;i<c.length;i++){var t=c[i].trim(),eq=t.indexOf('=');if(eq<=0)continue;var k=t.slice(0,eq).trim().toLowerCase();if(keys[k]){x=decodeURIComponent(t.slice(eq+1));break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!l){alert('Open your AFL Fantasy draft page first');return}if(!x){x=window.prompt('Could not auto-read X-SID. Paste it from DevTools > Application > Cookies > fantasy.afl.com.au', '')||''}if(!x){alert('X-SID is required');return}var targets=['http://localhost:3000','http://127.0.0.1:3000'];var body=JSON.stringify({leagueId:l,xSid:x});function send(idx){if(idx>=targets.length){alert('Failed to connect to your draft tool. Is it running on localhost:3000 or 127.0.0.1:3000?');return}fetch(targets[idx]+'/api/live-sync/connect',{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:body}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(){alert('Connected! League '+l+' — return to your draft tool')}).catch(function(){send(idx+1)})}send(0)})();`;
+// Uses top-level navigation/open (not fetch) because AFL CSP blocks
+// cross-origin requests to localhost.
+const CONSOLE_CONNECT_CODE = `(function(){var c=document.cookie.split(';'),x='',keys={'x-sid':1,'x_sid':1,'xsid':1};for(var i=0;i<c.length;i++){var t=c[i].trim(),eq=t.indexOf('=');if(eq<=0)continue;var k=t.slice(0,eq).trim().toLowerCase();if(keys[k]){x=decodeURIComponent(t.slice(eq+1));break}}var m=window.location.href.match(/leagues?\\/(\\d+)/),l=m?m[1]:'';if(!l){alert('Open your AFL Fantasy draft page first');return}if(!x){x=window.prompt('Could not auto-read X-SID. Paste it from DevTools > Application > Cookies > fantasy.afl.com.au', '')||''}if(!x){alert('X-SID is required');return}var q='?leagueId='+encodeURIComponent(l)+'&xSid='+encodeURIComponent(x);var u1='http://localhost:3000/api/live-sync/connect'+q;var u2='http://127.0.0.1:3000/api/live-sync/connect'+q;var w=window.open(u1,'_blank');if(!w){window.location.href=u1;return}alert('Opened local connect tab. If it failed, open this URL manually: '+u2)})();`;
+
+// Bookmarklet source — reads X-SID + league ID from the AFL Fantasy page
+// and opens your local connect URL.
+const BOOKMARKLET_CODE = `javascript:${CONSOLE_CONNECT_CODE}`;
 
 const LIVE_SYNC_LEAGUE_ID_KEY = "afl-live-sync-league-id";
 const LIVE_SYNC_XSID_KEY = "afl-live-sync-xsid";
-
-const PHASES: { key: DraftPhase; label: string }[] = [
-  { key: "early", label: "Early" },
-  { key: "mid", label: "Mid" },
-  { key: "late", label: "Late" },
-];
 
 export function SettingsSidebar() {
   const settings = useSettingsStore();
@@ -59,6 +54,7 @@ export function SettingsSidebar() {
   const [bookmarkletCopied, setBookmarkletCopied] = useState(false);
   const [consoleCopied, setConsoleCopied] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
+  const savedSnapshotInfo = sync.getSavedSnapshotInfo();
 
   // Persist credentials to localStorage.
   useEffect(() => {
@@ -192,7 +188,7 @@ export function SettingsSidebar() {
   if (!sidebarOpen) return null;
 
   return (
-    <div className="flex h-full w-72 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="relative flex h-full w-72 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           <Settings className="h-4 w-4" />
@@ -259,6 +255,39 @@ export function SettingsSidebar() {
                 </p>
               )}
             </div>
+
+            {savedSnapshotInfo.exists && (
+              <div className="mb-2 rounded border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-700 dark:bg-zinc-800/50">
+                <p className="text-[10px] font-medium text-zinc-600 dark:text-zinc-300">
+                  Saved offline snapshot
+                </p>
+                <p className="mt-0.5 text-[10px] text-zinc-500">
+                  {savedSnapshotInfo.leagueName || "League"} · {savedSnapshotInfo.totalPicks} picks
+                  {savedSnapshotInfo.savedAt
+                    ? ` · ${Math.max(0, Math.round((nowTs - savedSnapshotInfo.savedAt) / 1000))}s ago`
+                    : ""}
+                </p>
+                <div className="mt-1.5 flex gap-1.5">
+                  <button
+                    onClick={() => {
+                      const result = sync.restoreSavedSnapshot();
+                      if (!result.success) alert(result.error);
+                    }}
+                    className="rounded border border-zinc-300 px-2 py-1 text-[10px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  >
+                    Restore snapshot
+                  </button>
+                  <button
+                    onClick={() => {
+                      sync.clearSavedSnapshot();
+                    }}
+                    className="rounded border border-zinc-300 px-2 py-1 text-[10px] text-zinc-500 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Inputs */}
             <div className="mb-2 flex flex-col gap-1.5">
@@ -373,10 +402,20 @@ export function SettingsSidebar() {
             >
               {Array.from({ length: settings.numTeams }, (_, i) => (
                 <option key={i + 1} value={i + 1}>
-                  Team {i + 1}
+                  {sync.teamNames[i]
+                    ? `Team ${i + 1} - ${sync.teamNames[i]}`
+                    : `Team ${i + 1}`}
                 </option>
               ))}
             </select>
+            {sync.teamNames.length > 0 && (
+              <p className="mt-1 text-[10px] text-zinc-500">
+                Live draft order:{" "}
+                {sync.teamNames
+                  .map((name, i) => `T${i + 1}=${name}`)
+                  .join(" • ")}
+              </p>
+            )}
           </Field>
 
           {/* Num teams */}
@@ -499,72 +538,65 @@ export function SettingsSidebar() {
                 Enabled
               </label>
             </div>
-
-            <div className="mb-3 rounded bg-zinc-50 p-2 dark:bg-zinc-800/60">
-              <span className="mb-1 block text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-                Phase Boundaries
-              </span>
+            <div className="mb-2 flex flex-col gap-2">
               <WeightSlider
-                label="Early→Mid"
-                value={settings.phaseBoundaries.earlyToMid}
-                onChange={(v) => settings.setPhaseBoundary("earlyToMid", v)}
+                label="Avg25"
+                value={settings.pickNowWeights.avg25}
+                onChange={(v) => settings.setPickNowWeights({ avg25: v })}
                 step={0.01}
               />
               <WeightSlider
-                label="Mid→Late"
-                value={settings.phaseBoundaries.midToLate}
-                onChange={(v) => settings.setPhaseBoundary("midToLate", v)}
+                label="Proj"
+                value={settings.pickNowWeights.projection}
+                onChange={(v) => settings.setPickNowWeights({ projection: v })}
+                step={0.01}
+              />
+              <WeightSlider
+                label="Cons"
+                value={settings.pickNowWeights.consistency}
+                onChange={(v) => settings.setPickNowWeights({ consistency: v })}
+                step={0.01}
+              />
+              <WeightSlider
+                label="ADP"
+                value={settings.pickNowWeights.adp}
+                onChange={(v) => settings.setPickNowWeights({ adp: v })}
+                step={0.01}
+              />
+              <WeightSlider
+                label="Scarcity"
+                value={settings.pickNowWeights.scarcity}
+                onChange={(v) => settings.setPickNowWeights({ scarcity: v })}
                 step={0.01}
               />
             </div>
-
-            <div className="flex flex-col gap-2">
-              {PHASES.map((phase) => (
-                <div
-                  key={phase.key}
-                  className="rounded bg-zinc-50 p-2 dark:bg-zinc-800/60"
-                >
-                  <span className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
-                    {phase.label} Weights
-                  </span>
-                  <WeightSlider
-                    label="VONA"
-                    value={settings.phaseWeights[phase.key].vona}
-                    onChange={(v) =>
-                      settings.setPhaseWeight(phase.key, { vona: v })
-                    }
-                  />
-                  <WeightSlider
-                    label="Value"
-                    value={settings.phaseWeights[phase.key].value}
-                    onChange={(v) =>
-                      settings.setPhaseWeight(phase.key, { value: v })
-                    }
-                  />
-                  <WeightSlider
-                    label="Cons"
-                    value={settings.phaseWeights[phase.key].consistency}
-                    onChange={(v) =>
-                      settings.setPhaseWeight(phase.key, { consistency: v })
-                    }
-                  />
-                  <WeightSlider
-                    label="Risk Pen"
-                    value={settings.phaseWeights[phase.key].riskPenalty}
-                    onChange={(v) =>
-                      settings.setPhaseWeight(phase.key, { riskPenalty: v })
-                    }
-                  />
-                </div>
-              ))}
+            <div className="rounded bg-zinc-50 p-2 text-[11px] text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300">
+              <p className="mb-1 font-medium">Simple factors used:</p>
+              {(() => {
+                const total =
+                  settings.pickNowWeights.avg25 +
+                  settings.pickNowWeights.projection +
+                  settings.pickNowWeights.consistency +
+                  settings.pickNowWeights.adp +
+                  settings.pickNowWeights.scarcity;
+                const safe = total > 0 ? total : 1;
+                return (
+                  <p>
+                    Avg25 {((settings.pickNowWeights.avg25 / safe) * 100).toFixed(0)}% · Projection {((settings.pickNowWeights.projection / safe) * 100).toFixed(0)}% · Consistency {((settings.pickNowWeights.consistency / safe) * 100).toFixed(0)}% · ADP {((settings.pickNowWeights.adp / safe) * 100).toFixed(0)}% · Scarcity {((settings.pickNowWeights.scarcity / safe) * 100).toFixed(0)}%
+                  </p>
+                );
+              })()}
+              <p className="mt-1 text-[10px] text-zinc-500">
+                Scarcity is starter-need adjusted, so 1-slot RUC won&apos;t overpower 5/6-slot lines.
+              </p>
+              <button
+                onClick={() => settings.resetPickNowSettings()}
+                className="mt-2 inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-[10px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset Pick-Now Weights
+              </button>
             </div>
-
-            <button
-              onClick={() => settings.resetPickNowSettings()}
-              className="mt-2 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-            >
-              Reset Pick-Now Weights
-            </button>
           </div>
 
           <button
@@ -636,6 +668,7 @@ export function SettingsSidebar() {
           </button>
         )}
       </div>
+
     </div>
   );
 }
