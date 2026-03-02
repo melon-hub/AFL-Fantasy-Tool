@@ -21,25 +21,40 @@ export function ByePlanner({ players, settings }: ByePlannerProps) {
     [players, settings.myTeamNumber]
   );
 
+  const displayedByeRounds = useMemo(() => {
+    const rounds = new Set<number>(BYE_ROUNDS);
+    for (const p of myPlayers) {
+      if (Number.isFinite(p.bye) && p.bye > 0) {
+        rounds.add(p.bye);
+      }
+    }
+    return Array.from(rounds).sort((a, b) => a - b);
+  }, [myPlayers]);
+
+  const myPlayersWithUnknownBye = useMemo(
+    () => myPlayers.filter((p) => !Number.isFinite(p.bye) || p.bye <= 0),
+    [myPlayers]
+  );
+
   const availableByBye = useMemo(() => {
     const counts: Record<number, number> = {};
-    for (const bye of BYE_ROUNDS) counts[bye] = 0;
+    for (const bye of displayedByeRounds) counts[bye] = 0;
     for (const p of players) {
-      if (!p.isDrafted && BYE_ROUNDS.includes(p.bye as 12 | 13 | 14)) {
+      if (!p.isDrafted && Number.isFinite(p.bye) && p.bye > 0 && counts[p.bye] != null) {
         counts[p.bye] = (counts[p.bye] || 0) + 1;
       }
     }
     return counts;
-  }, [players]);
+  }, [players, displayedByeRounds]);
 
   const myByeGroups = useMemo(() => {
     const groups: Record<number, PlayerWithMetrics[]> = {};
-    for (const bye of BYE_ROUNDS) groups[bye] = [];
+    for (const bye of displayedByeRounds) groups[bye] = [];
     for (const p of myPlayers) {
       if (groups[p.bye]) groups[p.bye].push(p);
     }
     return groups;
-  }, [myPlayers]);
+  }, [myPlayers, displayedByeRounds]);
 
   const maxAvailable = Math.max(...Object.values(availableByBye), 1);
 
@@ -52,7 +67,7 @@ export function ByePlanner({ players, settings }: ByePlannerProps) {
           Available Players by Bye Round
         </h3>
         <div className="flex flex-col gap-3">
-          {BYE_ROUNDS.map((bye) => {
+          {displayedByeRounds.map((bye) => {
             const count = availableByBye[bye] || 0;
             const pct = (count / maxAvailable) * 100;
             return (
@@ -79,13 +94,13 @@ export function ByePlanner({ players, settings }: ByePlannerProps) {
       {/* My team bye distribution */}
       <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-700">
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          My Team by Bye Round
+          My Team by Bye Round (Team {settings.myTeamNumber})
         </h3>
         {myPlayers.length === 0 ? (
           <p className="text-sm text-zinc-400">No players drafted yet.</p>
         ) : (
           <div className="flex flex-col gap-3">
-            {BYE_ROUNDS.map((bye) => {
+            {displayedByeRounds.map((bye) => {
               const group = myByeGroups[bye] || [];
               const isThin = group.length <= 2 && myPlayers.length >= 6;
               const isHeavy = group.length >= 5;
@@ -134,6 +149,34 @@ export function ByePlanner({ players, settings }: ByePlannerProps) {
                 </div>
               );
             })}
+            {myPlayersWithUnknownBye.length > 0 && (
+              <div>
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    Unknown Bye
+                  </span>
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                    {myPlayersWithUnknownBye.length} players
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {myPlayersWithUnknownBye.map((p) => (
+                    <span
+                      key={p.id}
+                      className="flex items-center gap-1 rounded bg-zinc-50 px-2 py-0.5 text-xs dark:bg-zinc-800"
+                    >
+                      <span
+                        className={clsx(
+                          "inline-block h-2 w-2 rounded-full",
+                          POSITION_COLORS[p.bestVorpPosition]
+                        )}
+                      />
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>

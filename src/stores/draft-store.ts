@@ -14,6 +14,10 @@ interface DraftPlayerOptions {
   pickInRound?: number | null;
 }
 
+interface SyncDraftPlayerOptions extends DraftPlayerOptions {
+  teamNumber: number;
+}
+
 function getNextOverallPick(draftPicks: DraftPick[]): number {
   const maxOverall = draftPicks.reduce(
     (max, pick) => Math.max(max, pick.overallPick ?? 0),
@@ -43,6 +47,10 @@ interface DraftStore {
     playerId: string,
     teamNumber: number,
     options?: DraftPlayerOptions
+  ) => void;
+  syncDraftedPlayerMeta: (
+    playerId: string,
+    options: SyncDraftPlayerOptions
   ) => void;
   setCurrentOverallPick: (pick: number) => void;
   undraftPlayer: (playerId: string) => void;
@@ -110,6 +118,61 @@ export const useDraftStore = create<DraftStore>()(
           currentOverallPick: Math.max(
             currentOverallPick + 1,
             resolvedOverallPick + 1
+          ),
+        });
+      },
+
+      syncDraftedPlayerMeta: (playerId, options) => {
+        const { players, draftPicks, currentOverallPick } = get();
+        const player = players.find((p) => p.id === playerId);
+        if (!player) return;
+
+        const teamNumber = Math.max(1, Math.floor(options.teamNumber));
+        const requestedOverallPick = options.overallPick;
+        const resolvedOverallPick =
+          typeof requestedOverallPick === "number" &&
+          Number.isFinite(requestedOverallPick) &&
+          requestedOverallPick > 0
+            ? Math.floor(requestedOverallPick)
+            : player.draftOrder ?? currentOverallPick;
+
+        const pick: DraftPick = {
+          playerId,
+          playerName: player.name,
+          position: player.positionString,
+          teamNumber,
+          teamName: options.teamName ?? null,
+          sourceTeamId: options.sourceTeamId ?? null,
+          overallPick: resolvedOverallPick,
+          round: options.round ?? null,
+          pickInRound: options.pickInRound ?? null,
+          timestamp: Date.now(),
+        };
+
+        const existingPickIndex = draftPicks.findIndex(
+          (dp) => dp.playerId === playerId
+        );
+        const nextDraftPicks =
+          existingPickIndex >= 0
+            ? draftPicks.map((dp, idx) => (idx === existingPickIndex ? pick : dp))
+            : [...draftPicks, pick];
+        nextDraftPicks.sort((a, b) => a.overallPick - b.overallPick);
+
+        set({
+          players: players.map((p) =>
+            p.id === playerId
+              ? {
+                  ...p,
+                  isDrafted: true,
+                  draftedBy: teamNumber,
+                  draftOrder: resolvedOverallPick,
+                }
+              : p
+          ),
+          draftPicks: nextDraftPicks,
+          currentOverallPick: Math.max(
+            currentOverallPick,
+            getNextOverallPick(nextDraftPicks)
           ),
         });
       },

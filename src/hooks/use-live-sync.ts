@@ -150,6 +150,9 @@ export function useLiveSync() {
   // Subscribe to store outside React render cycle — always fresh
   const playersRef = useRef(useDraftStore.getState().players);
   const draftPlayerRef = useRef(useDraftStore.getState().draftPlayer);
+  const syncDraftedPlayerMetaRef = useRef(
+    useDraftStore.getState().syncDraftedPlayerMeta
+  );
   const setCurrentOverallPickRef = useRef(
     useDraftStore.getState().setCurrentOverallPick
   );
@@ -160,6 +163,7 @@ export function useLiveSync() {
     const unsub = useDraftStore.subscribe((s) => {
       playersRef.current = s.players;
       draftPlayerRef.current = s.draftPlayer;
+      syncDraftedPlayerMetaRef.current = s.syncDraftedPlayerMeta;
       setCurrentOverallPickRef.current = s.setCurrentOverallPick;
       exportStateRef.current = s.exportState;
       importStateRef.current = s.importState;
@@ -339,6 +343,7 @@ export function useLiveSync() {
 
       const players = playersRef.current;
       const draftPlayer = draftPlayerRef.current;
+      const syncDraftedPlayerMeta = syncDraftedPlayerMetaRef.current;
       let newCount = 0;
 
       const playersById = new Map<string, (typeof players)[number]>();
@@ -393,19 +398,36 @@ export function useLiveSync() {
           if (byName?.length === 1) match = byName[0];
         }
 
-        if (match && !match.isDrafted) {
+        if (match) {
           const teamId = pick.teamId ?? null;
-          const teamNum = Math.max(1, getTeamNumber(teamId));
-          draftPlayer(match.id, teamNum, {
-            overallPick: pick.overallPick,
-            teamName:
-              pick.teamName ??
-              (teamId ? teamNameByIdRef.current.get(teamId) ?? null : null),
-            sourceTeamId: teamId,
-            round: pick.round ?? null,
-            pickInRound: pick.pickInRound ?? null,
-          });
-          newCount++;
+          const mappedTeamNum = getTeamNumber(teamId);
+          const teamNum = Math.max(1, mappedTeamNum || match.draftedBy || 1);
+          const teamName =
+            pick.teamName ??
+            (teamId ? teamNameByIdRef.current.get(teamId) ?? null : null);
+          const hasMismatch =
+            match.draftedBy !== teamNum || match.draftOrder !== pick.overallPick;
+
+          if (!match.isDrafted) {
+            draftPlayer(match.id, teamNum, {
+              overallPick: pick.overallPick,
+              teamName,
+              sourceTeamId: teamId,
+              round: pick.round ?? null,
+              pickInRound: pick.pickInRound ?? null,
+            });
+            newCount++;
+          } else if (hasMismatch) {
+            // Keep local player-team assignment aligned with AFL source after reconnect.
+            syncDraftedPlayerMeta(match.id, {
+              teamNumber: teamNum,
+              overallPick: pick.overallPick,
+              teamName,
+              sourceTeamId: teamId,
+              round: pick.round ?? null,
+              pickInRound: pick.pickInRound ?? null,
+            });
+          }
         }
 
         // Mark as processed even if no match (player not in CSV — skip)

@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Flame,
   Clock,
   History,
-  ChevronRight,
+  ListOrdered,
   Users,
 } from "lucide-react";
 import clsx from "clsx";
@@ -25,6 +24,9 @@ interface IntelligencePanelProps {
 }
 
 const PRIORITY_INTENDED_POSITION: Position[] = ["FWD", "DEF", "RUC", "MID"];
+const SHORTLIST_STORAGE_KEY = "afl:draft-board:shortlist:v1";
+const SHORTLIST_ORDER_STORAGE_KEY = "afl:draft-board:shortlist-order:v1";
+const SHORTLIST_UPDATED_EVENT = "afl:shortlist-updated";
 const MINI_LINEUP_COLORS: Record<Position, string> = {
   DEF: "#3b82f6",
   MID: "#22c55e",
@@ -32,21 +34,9 @@ const MINI_LINEUP_COLORS: Record<Position, string> = {
   FWD: "#ef4444",
 };
 
-function textIndicatesSeasonOut(text: string | null | undefined): boolean {
-  const lower = typeof text === "string" ? text.toLowerCase() : "";
-  return (
-    lower.includes("out for season") ||
-    lower.includes("season-ending") ||
-    lower.includes("season ending") ||
-    lower.includes("season over") ||
-    lower.includes("injury: season") ||
-    lower.includes("miss the season") ||
-    lower.includes("miss the entirety")
-  );
-}
-
-function isSeasonLongUnavailable(player: PlayerWithMetrics): boolean {
-  return textIndicatesSeasonOut(player.injury) || textIndicatesSeasonOut(player.notes);
+interface ShortlistState {
+  ids: string[];
+  order: string[];
 }
 
 function getIntendedRosterPosition(player: PlayerWithMetrics): Position {
@@ -60,7 +50,29 @@ function getSurnameLabel(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   const surname = parts[parts.length - 1] ?? name.trim();
   if (!surname) return "—";
-  return surname.length > 11 ? `${surname.slice(0, 11)}…` : surname;
+  return surname.length > 9 ? `${surname.slice(0, 9)}…` : surname;
+}
+
+function readShortlistState(): ShortlistState {
+  if (typeof window === "undefined") return { ids: [], order: [] };
+
+  try {
+    const rawIds = window.localStorage.getItem(SHORTLIST_STORAGE_KEY);
+    const parsedIds = rawIds ? JSON.parse(rawIds) : [];
+    const ids = Array.isArray(parsedIds)
+      ? parsedIds.filter((id): id is string => typeof id === "string")
+      : [];
+
+    const rawOrder = window.localStorage.getItem(SHORTLIST_ORDER_STORAGE_KEY);
+    const parsedOrder = rawOrder ? JSON.parse(rawOrder) : [];
+    const order = Array.isArray(parsedOrder)
+      ? parsedOrder.filter((id): id is string => typeof id === "string")
+      : [];
+
+    return { ids, order };
+  } catch {
+    return { ids: [], order: [] };
+  }
 }
 
 export function IntelligencePanel({
@@ -70,6 +82,25 @@ export function IntelligencePanel({
   currentOverallPick,
   onDraftClick,
 }: IntelligencePanelProps) {
+  const [shortlistState, setShortlistState] = useState<ShortlistState>({
+    ids: [],
+    order: [],
+  });
+
+  useEffect(() => {
+    const refresh = () => {
+      setShortlistState(readShortlistState());
+    };
+
+    refresh();
+    window.addEventListener(SHORTLIST_UPDATED_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(SHORTLIST_UPDATED_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
   const myDraftedPlayers = useMemo(
     () => players.filter((p) => p.isDrafted && p.draftedBy === settings.myTeamNumber),
     [players, settings.myTeamNumber]
@@ -95,6 +126,11 @@ export function IntelligencePanel({
         .slice(-5)
         .reverse(),
     [draftPicks, settings.myTeamNumber]
+  );
+
+  const leagueRecentPicks = useMemo(
+    () => draftPicks.slice(-5).reverse(),
+    [draftPicks]
   );
 
   const teamBalance = useMemo(() => {
@@ -191,39 +227,29 @@ export function IntelligencePanel({
     };
   }, [myDraftedPlayers, myDraftedCount, settings]);
 
-  const smokiesForNextPick = useMemo(() => {
-    const nextPick = countdown.myNextOverallPick;
-    return players
-      .filter(
-        (p) =>
-          !p.isDrafted &&
-          p.category === "smoky" &&
-          !isSeasonLongUnavailable(p)
-      )
-      .map((p) => {
-        const adp = p.adp ?? nextPick + 24;
-        const urgencyBeforeNextPick = Math.max(0, nextPick - adp);
-        const valueSignal = Math.max(0, p.valueOverAdp ?? 0);
-        const vonaSignal = Math.max(0, p.vona ?? 0);
+  const shortlistRows = useMemo(() => {
+    if (shortlistState.ids.length === 0) return [];
 
-        // Higher score => stronger case to take before your next turn.
-        const nextPickValueScore =
-          p.pickNowScore +
-          urgencyBeforeNextPick * 2.2 +
-          valueSignal * 1.1 +
-          vonaSignal * 0.7 -
-          p.riskScore * 0.08;
+    const playersById = new Map(players.map((p) => [p.id, p]));
+    const shortlistSet = new Set(shortlistState.ids);
+    const orderedKnown = shortlistState.order.filter((id) => shortlistSet.has(id));
+    const orderedSet = new Set(orderedKnown);
+    const mergedOrder = [
+      ...orderedKnown,
+      ...shortlistState.ids.filter((id) => !orderedSet.has(id)),
+    ];
 
+    return mergedOrder
+      .map((id, idx) => {
+        const player = playersById.get(id);
+        if (!player) return null;
         return {
-          player: p,
-          nextPickValueScore,
-          urgencyBeforeNextPick,
-          nextPick,
+          rank: idx + 1,
+          player,
         };
       })
-      .sort((a, b) => b.nextPickValueScore - a.nextPickValueScore)
-      .slice(0, 4);
-  }, [players, countdown.myNextOverallPick]);
+      .filter((entry): entry is { rank: number; player: PlayerWithMetrics } => entry !== null);
+  }, [players, shortlistState.ids, shortlistState.order]);
 
   const miniStarterLineup = useMemo(() => {
     const grouped: Record<Position, PlayerWithMetrics[]> = {
@@ -253,7 +279,7 @@ export function IntelligencePanel({
   return (
     <div className="grid auto-rows-min grid-cols-2 gap-2">
       {/* Pick Countdown */}
-      <section className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
+      <section className="col-span-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
         <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
           <Clock className="h-3.5 w-3.5" />
           Pick Countdown
@@ -264,7 +290,7 @@ export function IntelligencePanel({
           </p>
         ) : (
           <p className="text-sm text-zinc-500">
-            <strong className="text-xl leading-none text-zinc-900 dark:text-zinc-100">
+            <strong className="text-lg leading-none text-zinc-900 dark:text-zinc-100">
               {countdown.picksUntilMyTurn}
             </strong>{" "}
             picks until your turn
@@ -297,112 +323,114 @@ export function IntelligencePanel({
         )}
       </section>
 
-      {/* My Team Balance */}
+      {/* League Recent Picks */}
       <section className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
+        <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          <History className="h-3.5 w-3.5" />
+          League Last 5
+        </h3>
+        {leagueRecentPicks.length === 0 ? (
+          <p className="text-[11px] text-zinc-500">No picks yet.</p>
+        ) : (
+          <div className="space-y-1">
+            {leagueRecentPicks.map((pick) => (
+              <div key={`${pick.playerId}-${pick.overallPick}-league`} className="flex items-center gap-1.5 text-[11px]">
+                <span className="w-7 shrink-0 font-mono text-zinc-500">#{pick.overallPick}</span>
+                <span className="min-w-0 flex-1 truncate text-zinc-800 dark:text-zinc-200">
+                  {pick.playerName}
+                </span>
+                <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  {pick.position}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* My Team Balance */}
+      <section className="col-span-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
         <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500">
           <Users className="h-3.5 w-3.5" />
           My Team Balance
         </h3>
 
-        <div className="flex flex-col gap-1">
+        <div className="grid grid-cols-4 gap-1.5">
           {teamBalance.byPosition.map((row) => {
             return (
-              <div key={row.pos} className="rounded border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    {row.pos}
-                  </span>
-                  <span className="font-mono text-zinc-500">
-                    P {row.primaryFilled}/{row.primaryTarget} · B {row.benchFilled}/{row.benchTarget}
-                  </span>
+              <div
+                key={row.pos}
+                className="rounded border border-zinc-200 px-2 py-1.5 dark:border-zinc-700"
+              >
+                <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  {row.pos}
                 </div>
-                <div className="mt-0.5 flex items-center justify-between text-sm">
-                  <span
-                    className={clsx(
-                      row.primaryNeed + row.benchNeed > 0
-                        ? "text-amber-600 dark:text-amber-400"
-                        : "text-green-600 dark:text-green-400"
-                    )}
-                  >
-                    need P{row.primaryNeed} B{row.benchNeed}
-                  </span>
-                  {row.overflow > 0 && (
-                    <span className="text-rose-600 dark:text-rose-400">
-                      +{row.overflow} over
-                    </span>
+                <div className="font-mono text-[11px] text-zinc-500 whitespace-nowrap">
+                  P {row.primaryFilled}/{row.primaryTarget} B {row.benchFilled}/{row.benchTarget}
+                </div>
+                <div
+                  className={clsx(
+                    "text-[10px] font-medium",
+                    row.primaryNeed + row.benchNeed > 0
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-green-600 dark:text-green-400"
                   )}
+                >
+                  P{row.primaryNeed} B{row.benchNeed}
                 </div>
+                {row.overflow > 0 && (
+                  <div className="text-[10px] text-rose-600 dark:text-rose-400">
+                    +{row.overflow}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
 
-        <div className="mt-1.5 border-t border-zinc-200 pt-1.5 text-xs text-zinc-500 dark:border-zinc-700">
-          Need P
-          <strong className="px-1 text-zinc-700 dark:text-zinc-300">{teamBalance.primaryRemaining}</strong>
-          B
-          <strong className="px-1 text-zinc-700 dark:text-zinc-300">{teamBalance.benchRemaining}</strong>
-          · Slots left
-          <strong className="pl-1 text-zinc-700 dark:text-zinc-300">{teamBalance.totalRemaining}</strong>
-        </div>
-
       </section>
 
-      {/* Smokies Near Next Pick */}
-      <section className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
+      {/* Custom Shortlist */}
+      <section className="col-span-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-700">
         <h3 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          <Flame className="h-3.5 w-3.5 text-orange-500" />
-          Smokies Near Next Pick
+          <ListOrdered className="h-3.5 w-3.5" />
+          Custom Shortlist
         </h3>
 
-        {smokiesForNextPick.length === 0 ? (
-          <p className="text-sm text-zinc-500">No smoky candidates available right now.</p>
+        {shortlistRows.length === 0 ? (
+          <p className="text-sm text-zinc-500">No shortlisted players yet.</p>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            {smokiesForNextPick.map((entry, i) => {
-              const p = entry.player;
-              const adp = p.adp;
-              const adpText = adp == null ? "ADP n/a" : `ADP ${adp.toFixed(0)}`;
-              const urgencyText =
-                adp == null
-                  ? "Unknown availability"
-                  : entry.urgencyBeforeNextPick > 0
-                    ? `Likely gone before pick #${entry.nextPick}`
-                    : `Could still be there at #${entry.nextPick}`;
-
-              return (
+          <div className="max-h-[170px] overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
+            <div className="grid grid-cols-[2.4rem_minmax(0,1fr)_3.4rem_3.6rem] border-b border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60">
+              <span>SL</span>
+              <span>Name</span>
+              <span>Club</span>
+              <span>Pos</span>
+            </div>
+            <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {shortlistRows.map(({ rank, player }) => (
                 <button
-                  key={p.id}
-                  onClick={() => onDraftClick(p.id)}
-                  className="group flex min-w-0 items-start gap-2 rounded-lg p-1.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                  key={player.id}
+                  onClick={() => {
+                    if (!player.isDrafted) onDraftClick(player.id);
+                  }}
+                  className={clsx(
+                    "grid w-full grid-cols-[2.4rem_minmax(0,1fr)_3.4rem_3.6rem] items-center gap-1 px-2 py-1.5 text-left text-[11px] transition-colors",
+                    player.isDrafted
+                      ? "cursor-default bg-zinc-50 text-zinc-400 dark:bg-zinc-900/40 dark:text-zinc-500"
+                      : "text-zinc-700 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/50"
+                  )}
+                  title={player.isDrafted ? "Already drafted" : "Click to draft"}
                 >
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-orange-100 text-xs font-bold text-orange-700 dark:bg-orange-900 dark:text-orange-300">
-                    {i + 1}
+                  <span className="font-mono text-zinc-500">#{rank}</span>
+                  <span className={clsx("truncate", player.isDrafted && "line-through")}>
+                    {player.name}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="min-w-0 truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        {p.name}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-zinc-500">{p.positionString}</span>
-                    </div>
-                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                      NPV {entry.nextPickValueScore.toFixed(1)} · {adpText}
-                    </p>
-                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {urgencyText}
-                    </p>
-                    <p className="line-clamp-1 text-[11px] text-orange-700 dark:text-orange-300">
-                      {(p.smokyNote || p.notes || "Smoky upside based on role/value profile.")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                        .slice(0, 110)}
-                    </p>
-                  </div>
-                  <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-300 group-hover:text-zinc-500" />
+                  <span className="truncate uppercase text-zinc-500">{player.club}</span>
+                  <span className="truncate text-zinc-500">{player.positionString}</span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
         )}
       </section>
@@ -429,15 +457,15 @@ export function IntelligencePanel({
                 {row.labels.map((label, index) => {
                   const x =
                     total <= 1
-                      ? 225
-                      : 90 + (index * 282) / Math.max(1, total - 1);
+                      ? 228
+                      : 86 + (index * 284) / Math.max(1, total - 1);
                   const isEmpty = label === "—";
                   return (
                     <g key={`${row.pos}-${index}`}>
                       <rect
-                        x={x - 24}
+                        x={x - 27}
                         y={y - 9}
-                        width="48"
+                        width="54"
                         height="18"
                         rx="4"
                         fill={isEmpty ? "#1f2937" : MINI_LINEUP_COLORS[row.pos]}
@@ -447,7 +475,7 @@ export function IntelligencePanel({
                         x={x}
                         y={y + 4}
                         fill={isEmpty ? "#64748b" : "#ffffff"}
-                        fontSize="9"
+                        fontSize="8.5"
                         textAnchor="middle"
                         fontWeight={isEmpty ? "500" : "700"}
                       >

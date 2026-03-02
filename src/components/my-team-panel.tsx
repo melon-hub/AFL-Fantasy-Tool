@@ -119,9 +119,10 @@ function getPositionCoordinates(position: Position, count: number): FieldCoordin
 }
 
 function getFieldLabel(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  const surname = parts[parts.length - 1] || name;
-  return surname.slice(0, 5).toUpperCase();
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return name.slice(0, 16);
+  const surname = parts[parts.length - 1];
+  return surname.length > 18 ? `${surname.slice(0, 18)}…` : surname;
 }
 
 export function MyTeamPanel({ players, settings }: MyTeamPanelProps) {
@@ -303,7 +304,7 @@ export function MyTeamPanel({ players, settings }: MyTeamPanelProps) {
             </span>
           </div>
 
-          <div className="relative mx-auto h-[min(52vh,420px)] w-full max-w-5xl overflow-hidden rounded-2xl border border-emerald-900/80 bg-emerald-950 shadow-inner">
+          <div className="relative mx-auto h-[min(64vh,540px)] w-full max-w-6xl overflow-hidden rounded-2xl border border-emerald-900/80 bg-emerald-950 shadow-inner">
             <svg
               viewBox="0 0 100 100"
               className="h-full w-full"
@@ -435,15 +436,17 @@ export function MyTeamPanel({ players, settings }: MyTeamPanelProps) {
                   {slot.player ? (
                     <div
                       className={clsx(
-                        "flex h-9 w-9 items-center justify-center rounded-full border-2 text-[8px] font-bold uppercase tracking-wide shadow-md sm:h-10 sm:w-10",
+                        "flex min-w-[88px] max-w-[132px] items-center justify-center rounded-md border-2 px-2 py-1.5 text-[10px] font-semibold tracking-wide shadow-md",
                         FIELD_TOKEN_STYLES[slot.position]
                       )}
-                      title={`${slot.player.name} (${slot.player.positionString})`}
+                      title={`${slot.player.name} (${slot.player.positionString}) · Bye R${slot.player.bye}`}
                     >
-                      {getFieldLabel(slot.player.name)}
+                      <span className="truncate underline decoration-white/65 underline-offset-[2px]">
+                        {`${Number(slot.key.split("-")[1]) + 1}. ${getFieldLabel(slot.player.name)}`}
+                      </span>
                     </div>
                   ) : (
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-white/45 bg-black/20 text-[7px] font-semibold uppercase tracking-wide text-white/70">
+                    <div className="flex min-w-[72px] items-center justify-center rounded-md border border-dashed border-white/45 bg-black/20 px-1.5 py-1 text-[8px] font-semibold uppercase tracking-wide text-white/70">
                       ---
                     </div>
                   )}

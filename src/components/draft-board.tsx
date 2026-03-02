@@ -108,6 +108,7 @@ const SHORTLIST_STORAGE_KEY = "afl:draft-board:shortlist:v1";
 const SHORTLIST_ORDER_STORAGE_KEY = "afl:draft-board:shortlist-order:v1";
 const SHORTLIST_ONLY_STORAGE_KEY = "afl:draft-board:shortlist-only:v1";
 const SHORTLIST_SORT_MODE_STORAGE_KEY = "afl:draft-board:shortlist-sort-mode:v1";
+const SHORTLIST_UPDATED_EVENT = "afl:shortlist-updated";
 const NON_DRAGGABLE_COLUMNS = new Set(["action"]);
 const NON_TOGGLEABLE_COLUMNS = new Set<string>();
 
@@ -263,6 +264,10 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
   >(null);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
   const isCustomShortlistMode = showShortlistOnly && shortlistSortMode === "custom";
+  const broadcastShortlistUpdate = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(SHORTLIST_UPDATED_EVENT));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -347,7 +352,8 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       SHORTLIST_STORAGE_KEY,
       JSON.stringify(Array.from(shortlistIds))
     );
-  }, [shortlistIds, shortlistPrefsHydrated]);
+    broadcastShortlistUpdate();
+  }, [shortlistIds, shortlistPrefsHydrated, broadcastShortlistUpdate]);
 
   useEffect(() => {
     if (!shortlistPrefsHydrated) return;
@@ -356,7 +362,8 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
       SHORTLIST_ORDER_STORAGE_KEY,
       JSON.stringify(shortlistOrder)
     );
-  }, [shortlistOrder, shortlistPrefsHydrated]);
+    broadcastShortlistUpdate();
+  }, [shortlistOrder, shortlistPrefsHydrated, broadcastShortlistUpdate]);
 
   useEffect(() => {
     if (!shortlistPrefsHydrated) return;
@@ -460,7 +467,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
   const filteredPlayers = useMemo(() => {
     let list = players;
 
-    if (!showDrafted && !showShortlistOnly) {
+    if (!showDrafted) {
       list = list.filter((p) => !p.isDrafted);
     }
 
@@ -1127,7 +1134,7 @@ export function DraftBoard({ players, settings, onDraftClick }: DraftBoardProps)
               ? "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
               : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
           )}
-          title="Show only shortlisted players (includes drafted so you can track if they are gone)"
+          title="Show only shortlisted players (respects Hiding drafted toggle)"
         >
           Shortlist {shortlistedCount > 0 ? `(${shortlistedCount})` : ""}
         </button>
